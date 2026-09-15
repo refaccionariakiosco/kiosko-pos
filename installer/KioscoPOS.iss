@@ -2,7 +2,9 @@
 ; Uso: & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" KioscoPOS.iss
 
 #define MyAppName "Kiosco POS"
+#ifndef MyAppVersion
 #define MyAppVersion "1.0.0"
+#endif
 #define MyAppExeName "KioscoPOS.exe"
 
 [Setup]
@@ -17,7 +19,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 SetupIconFile=..\icono.ico
 UninstallDisplayIcon={app}\icono.ico
 OutputDir=..\dist
-OutputBaseFilename=SetupKioscoPOS
+OutputBaseFilename=SetupKioscoPOS-{#MyAppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

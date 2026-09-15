@@ -32,6 +32,51 @@ Es la reconstrucción de la PWA "Kiosco POS" como aplicación nativa de escritor
   render de etiquetas y recibos, e impresión.
 - **interface**: interfaz Qt (main window + vistas por módulo).
 
+## Modelo de datos
+
+Esquema SQLite/Supabase: el catálogo es global (`products`, `categories`), el
+inventario físico es por sucursal (`inventory`) y las ventas, caja, apartados y
+pedidos son operativos locales (replicables a la nube).
+
+```mermaid
+erDiagram
+    SYS_CONFIG ||--o{ SYS_CONFIG : "clave/valor"
+
+    CATEGORIES ||--o{ PRODUCTS : "clasifica"
+    PRODUCTS ||--o{ INVENTORY : "existencias por sucursal"
+    PRODUCTS ||--o{ STOCK_MOVEMENTS : "cardex"
+    PRODUCTS ||--o{ SALE_ITEMS : "se vende"
+    PRODUCTS ||--o{ APARTADO_ITEMS : "se reserva"
+    PRODUCTS oo--o{ PROVIDER_ITEMS : "enlaza lista de precios"
+    PRODUCTS oo--o{ PURCHASE_ORDER_LINES : "se recibe en pedidos"
+
+    SALES ||--|{ SALE_ITEMS : "contiene"
+    SALES ||--|{ SALE_PAYMENTS : "cobra"
+
+    APARTADOS ||--|{ APARTADO_ITEMS : "retiene"
+    APARTADOS ||--|{ APARTADO_ABONOS : "recibe abonos"
+
+    CASH_DAYS ||--o{ CASH_MOVEMENTS : "jornada"
+
+    PROVIDERS ||--o{ PROVIDER_ITEMS : "lista de precios"
+    PURCHASE_ORDERS ||--|{ PURCHASE_ORDER_LINES : "detalla"
+```
+
+Tablas principales:
+
+| Tabla                 | Contenido                                                            |
+| --------------------- | -------------------------------------------------------------------- |
+| `categories`          | Categorías de productos                                               |
+| `products`            | Catálogo global (código, nombre, precios, espejo legado de stock)     |
+| `inventory`           | Stock físico por sucursal `(product_id, branch_id)`                   |
+| `stock_movements`     | Auditoría de movimientos (VENTA, COMPRA, AJUSTE, ANULACION, …)        |
+| `sales` / `sale_items` / `sale_payments` | Venta, renglones y formas de pago                          |
+| `apartados` / `apartado_items` / `apartado_abonos` | Apartados a clientes con abonos                      |
+| `cash_days` / `cash_movements` | Jornada de caja (apertura/corte) y movimientos de efectivo      |
+| `providers` / `provider_items` | Proveedores y sus listas de precios para cotizar                 |
+| `purchase_orders` / `purchase_order_lines` | Pedidos a proveedor (pendiente/recibido/cancelado)     |
+| `sys_config`          | Clave/valor: identidad de sucursal, terminal y credenciales de nube  |
+
 ## Instalación
 
 ```bash
