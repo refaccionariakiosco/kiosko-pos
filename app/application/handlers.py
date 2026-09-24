@@ -1261,6 +1261,7 @@ class SaveSettingsHandler:
             KEY_STORE_FOOTER,
             KEY_STORE_NAME,
             KEY_STORE_PHONE,
+            KEY_TICKET_PRINTER,
         )
         from app.infrastructure.topology import (
             KEY_BRANCH,
@@ -1282,6 +1283,7 @@ class SaveSettingsHandler:
             KEY_LABEL_WIDTH_MM: None if command.label_width_mm is None else str(command.label_width_mm),
             KEY_LABEL_HEIGHT_MM: None if command.label_height_mm is None else str(command.label_height_mm),
             KEY_LABEL_DPI: None if command.label_dpi is None else str(command.label_dpi),
+            KEY_TICKET_PRINTER: command.ticket_printer,
             KEY_BRANCH: command.id_sucursal,
             KEY_TERMINAL_NUM: None if command.terminal_num is None else str(command.terminal_num).strip(),
             KEY_SUPABASE_URL: command.supabase_url,

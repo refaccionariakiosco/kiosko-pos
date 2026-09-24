@@ -40,6 +40,20 @@ DRAWER_KICK = ESC + b"p" + bytes([0, 25, 25])  # abrir cajón de dinero por el p
 
 _CHARSET = "cp437"
 
+#: Impresora térmica configurada en la pantalla Configuración (nombre exacto).
+#: Se define al arrancar y/o al guardar la configuración; vacío = detección automática.
+_config_printer = ""
+
+
+def set_configured_printer(printer_name: str | None) -> None:
+    """Registra el nombre de la impresora térmica elegida en Configuración."""
+    global _config_printer
+    _config_printer = (printer_name or "").strip()
+
+
+def configured_printer() -> str:
+    return _config_printer
+
 _TAG_RE = re.compile(r"<[^>]+>")
 _STYLE_ALIGN_RE = re.compile(r"text-align\s*:\s*(center|right|left)")
 _BARCODE_BLOCK_RE = re.compile(r"background-color:#111111")
@@ -136,11 +150,23 @@ def list_printers() -> list[str]:
     return [info.pName for info in infos if info.pName]
 
 
-def find_ticket_printer() -> str | None:
-    """Busca una impresora que parezca térmica de tickets."""
-    for name in list_printers():
-        lowered = name.lower()
-        if any(needle in lowered for needle in ("zkt", "tick", "thermal", "escpos", "esc/pos", "termica", "térmica")):
+def find_ticket_printer(preferred: str | None = None) -> str | None:
+    """Busca la impresora térmica a usar para los tickets.
+
+    Prioridades: nombre configurado en Configuración (mejor aún si se pasa
+    ``preferred``), luego el ``_config_printer`` registrado, y por último la
+    heurística por nombre.
+    """
+    candidates = [preferred, _config_printer]
+    installed = [name for name in list_printers() if name]
+    lowered = [name.lower() for name in installed]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        if candidate in installed:
+            return candidate
+    for name in installed:
+        if any(needle in name.lower() for needle in ("zkt", "tick", "thermal", "escpos", "esc/pos", "termica", "térmica")):
             return name
     return None
 
@@ -189,13 +215,13 @@ def raw_send(printer_name: str, data: bytes) -> bool:
         _winspool.ClosePrinter(handle)
 
 
-def print_receipt_ticket(html: str) -> bool:
+def print_receipt_ticket(html: str, printer_name: str | None = None) -> bool:
     """Imprime un recibo (HTML del proyecto) en la térmica detectada.
 
     Devuelve False si no hay impresora de tickets o falló el envío.
     """
-    printer_name = find_ticket_printer()
-    if printer_name is None:
+    target = find_ticket_printer(printer_name)
+    if target is None:
         log.warning("Ticket: no se encontró una impresora térmica instalada.")
         return False
     try:
@@ -203,28 +229,43 @@ def print_receipt_ticket(html: str) -> bool:
     except Exception:  # noqa: BLE001 - el parseo nunca debe romper la venta
         log.exception("Ticket: no se pudo convertir el recibo a ESC/POS.")
         return False
-    ok = raw_send(printer_name, data)
+    ok = raw_send(target, data)
     if ok:
-        log.info("Ticket: enviado a %r (ESC/POS, %d bytes).", printer_name, len(data))
+        log.info("Ticket: enviado a %r (ESC/POS, %d bytes).", target, len(data))
     return ok
 
 
-def kick_cash_drawer() -> bool:
+def kick_cash_drawer(printer_name: str | None = None) -> bool:
     """Abre el cajón de dinero conectado a la impresora térmica.
 
     Se envía ``ESC p 0 t1 t2`` por RAW; la mayoría de las térmicas (ZKteco
     incluida) dispara el pulso por el puerto RJ11 al recibirlo, haciendo saltar
     el cajón de efectivo. Nunca debe romper el flujo de la venta.
     """
-    printer_name = find_ticket_printer()
-    if printer_name is None:
+    target = find_ticket_printer(printer_name)
+    if target is None:
         log.warning("Cajón: no se encontró una impresora térmica para el pulso.")
         return False
     try:
-        ok = raw_send(printer_name, INIT + DRAWER_KICK)
+        ok = raw_send(target, INIT + DRAWER_KICK)
     except Exception:  # noqa: BLE001 - el pulso no debe romper la venta
         log.exception("Cajón: no se pudo abrir el cajón de dinero.")
         return False
     if ok:
-        log.info("Cajón: apertura enviada a %r.", printer_name)
+        log.info("Cajón: apertura enviada a %r.", target)
     return ok
+
+
+def print_test_ticket(printer_name: str | None = None) -> bool:
+    """Imprime un ticket de prueba mínimo (útil desde Configuración)."""
+    html = (
+        "<div style='font-family:monospace'>"
+        "<div style='text-align:center;font-weight:bold'>PRUEBA DE IMPRESIÓN</div>"
+        "<div style='text-align:center'>Kiosco POS</div>"
+        "<div>- - - - - - - - - - - - - - - -</div>"
+        "<div>Impresora térmica funcionando.</div>"
+        "<div style='text-align:right'>OK</div>"
+        "<div>- - - - - - - - - - - - - - - -</div>"
+        "</div>"
+    )
+    return print_receipt_ticket(html, printer_name=printer_name)

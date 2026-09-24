@@ -706,7 +706,7 @@ class CancelTicketDialog(QDialog):
         layout.addWidget(self.info)
 
         self.table = make_table(
-            ["Recibo", "Hora", "Ítems", "Total", "Método", "Estado"],
+            ["Recibo", "Caja", "Hora", "Ítems", "Total", "Método", "Estado"],
             stretch_column=0,
         )
         layout.addWidget(self.table, 1)
@@ -744,14 +744,22 @@ class CancelTicketDialog(QDialog):
         )
         self.table.setRowCount(0)
         for sale in self._sales:
+            from app.interface.terminal_colors import terminal_label, terminal_row_color
+
             row = self.table.rowCount()
             self.table.insertRow(row)
-            self.table.setItem(row, 0, QTableWidgetItem(sale.receipt_number))
-            self.table.setItem(row, 1, QTableWidgetItem(sale.created_at.strftime("%H:%M")))
-            self.table.setItem(row, 2, QTableWidgetItem(str(sale.item_count)))
-            self.table.setItem(row, 3, QTableWidgetItem(sale.total.format()))
-            self.table.setItem(row, 4, QTableWidgetItem(sale.methods_label))
-            self.table.setItem(row, 5, QTableWidgetItem(sale.status))
+            recibo_item = QTableWidgetItem(sale.receipt_number)
+            caja_item = QTableWidgetItem(terminal_label(sale.receipt_number))
+            background = terminal_row_color(sale.receipt_number)
+            recibo_item.setBackground(background)
+            caja_item.setBackground(background)
+            self.table.setItem(row, 0, recibo_item)
+            self.table.setItem(row, 1, caja_item)
+            self.table.setItem(row, 2, QTableWidgetItem(sale.created_at.strftime("%H:%M")))
+            self.table.setItem(row, 3, QTableWidgetItem(str(sale.item_count)))
+            self.table.setItem(row, 4, QTableWidgetItem(sale.total.format()))
+            self.table.setItem(row, 5, QTableWidgetItem(sale.methods_label))
+            self.table.setItem(row, 6, QTableWidgetItem(sale.status))
         self.info.setText(f"{len(self._sales)} tickets emitidos hoy")
 
     def _selected(self) -> SaleDTO | None:

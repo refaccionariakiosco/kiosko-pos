@@ -22,6 +22,7 @@ from app.interface.dialogs import (
     CorteDialog,
     OpenCashDayDialog,
 )
+from app.interface.reports_dialog import ReportsDialog
 from app.interface.widgets import make_label, make_table
 
 
@@ -63,17 +64,20 @@ class CashView(QWidget):
         self.income_btn = QPushButton("Ingresar efectivo")
         self.withdraw_btn = QPushButton("Retirar efectivo")
         self.corte_btn = QPushButton("Corte de caja")
+        self.reports_btn = QPushButton("Reportes")
         self.open_btn.setObjectName("primary")
-        for btn in (self.income_btn, self.withdraw_btn, self.corte_btn):
+        for btn in (self.income_btn, self.withdraw_btn, self.corte_btn, self.reports_btn):
             btn.setObjectName("ghost")
         self.open_btn.clicked.connect(self._open_day)
         self.income_btn.clicked.connect(lambda: self._movement("ENTRADA"))
         self.withdraw_btn.clicked.connect(lambda: self._movement("SALIDA"))
         self.corte_btn.clicked.connect(self._do_corte)
+        self.reports_btn.clicked.connect(self._open_reports)
         actions.addWidget(self.open_btn)
         actions.addWidget(self.income_btn)
         actions.addWidget(self.withdraw_btn)
         actions.addWidget(self.corte_btn)
+        actions.addWidget(self.reports_btn)
         actions.addStretch(1)
         layout.addLayout(actions)
 
@@ -142,3 +146,7 @@ class CashView(QWidget):
         dialog = CorteDialog(self._commands, self._queries, opened_by=self._opened_by, settings=self._settings, parent=self)
         if dialog.exec() == CorteDialog.Accepted:
             self.refresh()
+
+    def _open_reports(self) -> None:
+        dialog = ReportsDialog(self._queries, parent=self)
+        dialog.exec()

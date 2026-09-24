@@ -113,6 +113,29 @@ from app.seed import seed_demo_data
 log = logging.getLogger(__name__)
 
 
+def _set_store_identity(settings: Settings, topology: Topology) -> None:
+    """Pone la identidad de sucursal/terminal en ``settings.store``.
+
+    El ``StoreInfo`` es inmutable; se reemplaza (vía object.__setattr__ en el
+    Settings) para que los tickets impresos lleven la caja y sucursal donde se
+    aplicó la venta. Si no hay sucursal configurada (modo local heredado), el
+    ticket sólo muestra la caja.
+    """
+    from app.settings import StoreInfo
+
+    terminal = topology.terminal_num or topology.id_terminal or ""
+    branch = topology.id_sucursal or ""
+    store = settings.store
+    object.__setattr__(settings, "store", StoreInfo(
+        name=store.name,
+        address=store.address,
+        phone=store.phone,
+        footer=store.footer,
+        branch_label=branch,
+        terminal_label=terminal,
+    ))
+
+
 @dataclass
 class AppServices:
     commands: CommandBus
@@ -238,6 +261,11 @@ def build_services(
         from app.infrastructure.local_config import load_local_config
 
         load_local_config(settings, session)
+        from app.infrastructure.printers.ticket_esc_pos import set_configured_printer
+
+        set_configured_printer(settings.ticket_printer)
+        # Identidad sucursal/terminal en el StoreInfo para imprimirla en tickets.
+        _set_store_identity(settings, topology_loaded)
 
     services = AppServices(
         commands=None,

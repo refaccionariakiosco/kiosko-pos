@@ -46,6 +46,8 @@ def build_settings(args: argparse.Namespace) -> Settings:
         kwargs["database_path"] = Path(args.db)
     if args.brother_ip:
         kwargs["brother_printer_ip"] = args.brother_ip
+    if args.ticket_printer:
+        kwargs["ticket_printer"] = args.ticket_printer
     return Settings(**kwargs)
 
 
@@ -61,6 +63,10 @@ def make_parser() -> argparse.ArgumentParser:
         help="Transporte para imprimir etiquetas (windows = controlador QPrinter)",
     )
     parser.add_argument("--brother-ip", default="", help="IP de la Brother QL-810W (modo brother_ql)")
+    parser.add_argument(
+        "--ticket-printer", default="",
+        help="Nombre exacto de la impresora térmica de tickets (mezcla autodetección si va vacío).",
+    )
     parser.add_argument(
         "--id-sucursal", default="", help="ID de sucursal (topología offline-first). Se persiste en sys_config."
     )

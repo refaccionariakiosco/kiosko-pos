@@ -27,6 +27,8 @@ class StoreInfo:
     address: str = ""
     phone: str = ""
     footer: str = "¡Gracias por su compra!"
+    branch_label: str = ""
+    terminal_label: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +44,7 @@ class Settings:
     label_dpi: int = 300
     label_printer_kind: str = "windows"  # "windows" | "brother_ql" | "null"
     brother_printer_ip: str = ""
+    ticket_printer: str = ""  # nombre de la impresora térmica de tickets ("" = automática)
     sync_interval_seconds: int = 300  # sincronización automática (sin cambios desactiva: 0)
     login_username: str = "angel"
     login_password: str = "12345"

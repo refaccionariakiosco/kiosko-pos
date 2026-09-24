@@ -294,6 +294,7 @@ class SaveSettingsCommand(Command):
     label_width_mm: float | None = None
     label_height_mm: float | None = None
     label_dpi: int | None = None
+    ticket_printer: str | None = None
     id_sucursal: str | None = None
     terminal_num: str | None = None
     supabase_url: str | None = None

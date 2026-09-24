@@ -23,6 +23,7 @@ KEY_BROTHER_PRINTER_IP = "brother_printer_ip"
 KEY_LABEL_WIDTH_MM = "label_width_mm"
 KEY_LABEL_HEIGHT_MM = "label_height_mm"
 KEY_LABEL_DPI = "label_dpi"
+KEY_TICKET_PRINTER = "ticket_printer"
 
 LOCAL_CONFIG_KEYS: tuple[str, ...] = (
     KEY_STORE_NAME,
@@ -37,6 +38,7 @@ LOCAL_CONFIG_KEYS: tuple[str, ...] = (
     KEY_LABEL_WIDTH_MM,
     KEY_LABEL_HEIGHT_MM,
     KEY_LABEL_DPI,
+    KEY_TICKET_PRINTER,
 )
 
 
@@ -117,12 +119,18 @@ def load_local_config(settings, session) -> None:
         "label_dpi",
         _to_int(values.get(KEY_LABEL_DPI), settings.label_dpi),
     )
+    object.__setattr__(
+        settings,
+        "ticket_printer",
+        values.get(KEY_TICKET_PRINTER, settings.ticket_printer),
+    )
 
 
 def apply_local_config(settings, *, store_name=None, store_address=None, store_phone=None,
                        store_footer=None, currency=None, login_username=None,
                        login_password=None, label_printer_kind=None, brother_printer_ip=None,
-                       label_width_mm=None, label_height_mm=None, label_dpi=None) -> None:
+                       label_width_mm=None, label_height_mm=None, label_dpi=None,
+                       ticket_printer=None) -> None:
     """Aplica en memoria un subconjunto de ajustes (sólo los no ``None``)."""
     from app.settings import StoreInfo
 
@@ -150,3 +158,5 @@ def apply_local_config(settings, *, store_name=None, store_address=None, store_p
         object.__setattr__(settings, "label_height_mm", label_height_mm)
     if label_dpi is not None:
         object.__setattr__(settings, "label_dpi", label_dpi)
+    if ticket_printer is not None:
+        object.__setattr__(settings, "ticket_printer", ticket_printer)

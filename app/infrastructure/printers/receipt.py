@@ -21,6 +21,7 @@ def render_receipt_html(sale: SaleDTO, store: StoreInfo, *, title: str = "RECIBO
         lines.append(f"<div style='text-align:center'>{html.escape(store.address)}</div>")
     if store.phone:
         lines.append(f"<div style='text-align:center'>Tel: {html.escape(store.phone)}</div>")
+    lines.append(_render_identity_line(store))
     lines.append("<div style='text-align:center'>- - - - - - - - - - - - - - - -</div>")
     lines.append(f"<div style='text-align:center;font-weight:bold;margin-top:2px'>{title}</div>")
     lines.append(
@@ -69,6 +70,18 @@ def render_receipt_html(sale: SaleDTO, store: StoreInfo, *, title: str = "RECIBO
 
 def render_separator() -> str:
     return "<div>- - - - - - - - - - - - - - - -</div>"
+
+
+def _render_identity_line(store: StoreInfo) -> str:
+    """Línea con la caja/sucursal donde se aplicó la venta (si están configuradas)."""
+    parts = []
+    if store.terminal_label:
+        parts.append(f"Caja: {store.terminal_label}")
+    if store.branch_label:
+        parts.append(f"Sucursal: {store.branch_label}")
+    if not parts:
+        return ""
+    return f"<div style='text-align:center'>{html.escape(' · '.join(parts))}</div>"
 
 
 def render_purchase_list_html(
@@ -195,6 +208,7 @@ def render_corte_html(corte: CorteDTO, sales: list[SaleDTO], store: StoreInfo) -
         lines.append(f"<div style='text-align:center'>{html.escape(store.address)}</div>")
     if store.phone:
         lines.append(f"<div style='text-align:center'>Tel: {html.escape(store.phone)}</div>")
+    lines.append(_render_identity_line(store))
     lines.append(render_separator())
     lines.append("<div style='text-align:center;font-weight:bold'>CIERRE DE CAJA</div>")
 

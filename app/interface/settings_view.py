@@ -25,6 +25,7 @@ from app.application.bus import CommandBus, QueryBus
 from app.application.commands import SaveSettingsCommand
 from app.bootstrap import AppServices
 from app.infrastructure.local_config import apply_local_config
+from app.infrastructure.printers.ticket_esc_pos import list_printers, set_configured_printer
 from app.interface.widgets import Card, make_label
 from app.settings import Settings
 
@@ -63,6 +64,7 @@ class SettingsView(QWidget):
         body_layout.addWidget(self._build_local_card())
         body_layout.addWidget(self._build_security_card())
         body_layout.addWidget(self._build_labels_card())
+        body_layout.addWidget(self._build_ticket_printer_card())
         body_layout.addWidget(self._build_cloud_card())
 
         save_btn = QPushButton("Guardar configuración")
@@ -137,6 +139,79 @@ class SettingsView(QWidget):
         form.addRow("Resolución (DPI):", self.print_dpi)
         card.add_layout(form)
         return card
+
+    def _build_ticket_printer_card(self) -> Card:
+        card = Card("Impresora de tickets y cajón de dinero")
+        form = QFormLayout()
+        self.ticket_printer_combo = QComboBox()
+        self.ticket_printer_combo.setEditable(True)
+        installed = list_printers()
+        self.ticket_printer_combo.addItem("Automática (detectar)", "")
+        for name in installed:
+            self.ticket_printer_combo.addItem(name, name)
+        current = self._settings.ticket_printer or ""
+        if current:
+            idx = self.ticket_printer_combo.findData(current)
+            if idx >= 0:
+                self.ticket_printer_combo.setCurrentIndex(idx)
+            else:
+                self.ticket_printer_combo.setCurrentIndex(0)
+                self.ticket_printer_combo.setCurrentText(current)
+        self.ticket_printer_combo.setToolTip(
+            "El nombre exacto de la impresora térmica (ej. 'ZKteco ticket'). "
+            "Con 'Automática' la detecta por su nombre."
+        )
+        form.addRow("Impresora de tickets:", self.ticket_printer_combo)
+        card.add_layout(form)
+
+        tests = QHBoxLayout()
+        test_print_btn = QPushButton("Probar impresión")
+        test_drawer_btn = QPushButton("Abrir cajón de dinero")
+        test_print_btn.setObjectName("ghost")
+        test_drawer_btn.setObjectName("ghost")
+        test_print_btn.clicked.connect(self._test_ticket)
+        test_drawer_btn.clicked.connect(self._test_drawer)
+        tests.addWidget(test_print_btn)
+        tests.addWidget(test_drawer_btn)
+        tests.addStretch(1)
+        card.add_layout(tests)
+        card.add(
+            make_label(
+                "Si la venta no imprime o el cajón no abre, elige aquí la impresora "
+                "térmica y guarda. Usa 'Probar impresión' para verificar.",
+                object_name="muted",
+            )
+        )
+        return card
+
+    def _test_ticket(self) -> None:
+        from app.infrastructure.printers.ticket_esc_pos import print_test_ticket, set_configured_printer
+
+        printer = self.ticket_printer_combo.currentData() or self.ticket_printer_combo.currentText().strip()
+        set_configured_printer(printer)
+        if print_test_ticket(printer):
+            QMessageBox.information(self, "Impresión", "Ticket de prueba enviado a la impresora.")
+        else:
+            QMessageBox.warning(
+                self,
+                "Impresión",
+                "No se pudo imprimir. Verifica que la impresora esté instalada y sea "
+                "térmica (ESC/POS), o revisa el nombre configurado.",
+            )
+
+    def _test_drawer(self) -> None:
+        from app.infrastructure.printers.ticket_esc_pos import kick_cash_drawer, set_configured_printer
+
+        printer = self.ticket_printer_combo.currentData() or self.ticket_printer_combo.currentText().strip()
+        set_configured_printer(printer)
+        if kick_cash_drawer(printer):
+            QMessageBox.information(self, "Cajón", "Pulso de apertura enviado al cajón de dinero.")
+        else:
+            QMessageBox.warning(
+                self,
+                "Cajón",
+                "No se abrió el cajón. Verifica el cable RJ11 conectado a la impresora.",
+            )
 
     def _build_cloud_card(self) -> Card:
         topology = self._services.topology
@@ -234,6 +309,8 @@ class SettingsView(QWidget):
             label_width_mm=float(self.print_width.value()),
             label_height_mm=float(self.print_height.value()),
             label_dpi=int(self.print_dpi.value()),
+            ticket_printer=self.ticket_printer_combo.currentData()
+            or self.ticket_printer_combo.currentText().strip(),
             id_sucursal=self.branch_edit.text().strip(),
             terminal_num=self.terminal_num_edit.text().strip(),
             supabase_url=self.supabase_url.text().strip(),
@@ -259,7 +336,9 @@ class SettingsView(QWidget):
             label_width_mm=values["label_width_mm"],
             label_height_mm=values["label_height_mm"],
             label_dpi=values["label_dpi"],
+            ticket_printer=values["ticket_printer"],
         )
+        set_configured_printer(values["ticket_printer"])
 
         if self._services.topology is not None:
             from app.infrastructure.topology import Topology

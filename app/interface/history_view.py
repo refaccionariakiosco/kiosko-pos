@@ -33,6 +33,17 @@ from app.interface.dialogs import ReceiptDialog, RefundLineDialog, show_domain_e
 from app.interface.widgets import make_label, make_table
 
 
+def _terminal_brush(receipt_number: str) -> object:
+    """QBrush con el color sólido de la caja (para el texto de la columna 'Caja')."""
+    from PySide6.QtGui import QBrush
+
+    from app.interface.terminal_colors import terminal_color, terminal_key
+
+    color = terminal_color(terminal_key(receipt_number))
+    color.setAlpha(255)
+    return QBrush(color)
+
+
 class HistoryView(QWidget):
     def __init__(self, commands: CommandBus, queries: QueryBus, settings: Settings):
         super().__init__()
@@ -89,15 +100,16 @@ class HistoryView(QWidget):
         layout.addLayout(toolbar)
 
         self.table = make_table(
-            ["Recibo", "Fecha", "Ítems", "Total", "Método", "Estado"],
+            ["Recibo", "Caja", "Fecha", "Ítems", "Total", "Método", "Estado"],
             stretch_column=None,
         )
-        self.table.setColumnWidth(0, 150)
-        self.table.setColumnWidth(1, 150)
-        self.table.setColumnWidth(2, 70)
-        self.table.setColumnWidth(3, 130)
-        self.table.setColumnWidth(4, 130)
-        self.table.setColumnWidth(5, 110)
+        self.table.setColumnWidth(0, 130)
+        self.table.setColumnWidth(1, 90)
+        self.table.setColumnWidth(2, 140)
+        self.table.setColumnWidth(3, 60)
+        self.table.setColumnWidth(4, 120)
+        self.table.setColumnWidth(5, 120)
+        self.table.setColumnWidth(6, 100)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.currentCellChanged.connect(lambda *_: self._show_detail())
         self.split.addWidget(self.table)
@@ -152,18 +164,27 @@ class HistoryView(QWidget):
         self._render()
 
     def _render(self) -> None:
+        from app.interface.terminal_colors import terminal_label, terminal_row_color
+
         self.table.setRowCount(0)
         for sale in self._sales:
             row = self.table.rowCount()
             self.table.insertRow(row)
-            self.table.setItem(row, 0, QTableWidgetItem(sale.receipt_number))
-            self.table.setItem(row, 1, QTableWidgetItem(sale.created_at.strftime("%d/%m/%Y %H:%M")))
-            self.table.setItem(row, 2, QTableWidgetItem(str(sale.item_count)))
+            recibo_item = QTableWidgetItem(sale.receipt_number)
+            caja_item = QTableWidgetItem(terminal_label(sale.receipt_number))
+            background = terminal_row_color(sale.receipt_number)
+            recibo_item.setBackground(background)
+            caja_item.setBackground(background)
+            caja_item.setForeground(_terminal_brush(sale.receipt_number))
+            self.table.setItem(row, 0, recibo_item)
+            self.table.setItem(row, 1, caja_item)
+            self.table.setItem(row, 2, QTableWidgetItem(sale.created_at.strftime("%d/%m/%Y %H:%M")))
+            self.table.setItem(row, 3, QTableWidgetItem(str(sale.item_count)))
             total_item = QTableWidgetItem(sale.total.format())
-            self.table.setItem(row, 3, total_item)
-            self.table.setItem(row, 4, QTableWidgetItem(sale.methods_label))
+            self.table.setItem(row, 4, total_item)
+            self.table.setItem(row, 5, QTableWidgetItem(sale.methods_label))
             state_item = QTableWidgetItem(sale.status)
-            self.table.setItem(row, 5, state_item)
+            self.table.setItem(row, 6, state_item)
         self.count_label.setText(f"{len(self._sales)} ventas")
 
     def _selected(self) -> SaleDTO | None:
