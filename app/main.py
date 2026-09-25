@@ -76,8 +76,18 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--terminal-num", default="", help="Número de caja (prefijo del recibo, p. ej. 1 o 2)."
     )
-    parser.add_argument("--supabase-url", default="", help="URL del proyecto Supabase para sincronización.")
-    parser.add_argument("--supabase-anon-key", default="", help="Anon key (publicable) del proyecto Supabase.")
+    parser.add_argument(
+        "--pocketbase-url", default="", help="URL del servidor PocketBase (LAN, ej. http://192.168.100.6:8090)."
+    )
+    parser.add_argument(
+        "--pocketbase-token", default="", help="Token de acceso opcional del servidor PocketBase."
+    )
+    parser.add_argument(
+        "--supabase-url", default="", help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--supabase-anon-key", default="", help=argparse.SUPPRESS,
+    )
     return parser
 
 
@@ -87,8 +97,8 @@ def build_topology(args: argparse.Namespace) -> Topology | None:
         "id_sucursal": args.id_sucursal,
         "id_terminal": args.id_terminal,
         "terminal_num": args.terminal_num,
-        "supabase_url": args.supabase_url,
-        "supabase_anon_key": args.supabase_anon_key,
+        "pocketbase_url": args.pocketbase_url or args.supabase_url,
+        "pocketbase_token": args.pocketbase_token or args.supabase_anon_key,
     }
     if not any(values.values()):
         return None
@@ -128,10 +138,10 @@ def entrypoint(argv: list[str] | None = None) -> int:
     if services.topology is not None:
         topo = services.topology
         log.info(
-            "Topología: sucursal=%s terminal=%s nube=%s",
+            "Topología: sucursal=%s terminal=%s servidor=%s",
             topo.id_sucursal or "(local)",
             topo.id_terminal,
-            "configurada" if topo.is_cloud_configured else "offline",
+            "configurado" if topo.is_cloud_configured else "offline",
         )
 
     from PySide6.QtWidgets import QApplication

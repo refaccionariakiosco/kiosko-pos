@@ -1,4 +1,4 @@
-"""Sincronización offline-first con el hub Supabase (v1: catálogo + inventario + ventas)."""
+"""Sincronización offline-first con el hub PocketBase (LAN): v1 catálogo + inventario + ventas."""
 
 from app.infrastructure.sync.engine import SyncEngine, SyncReport, run_sync
 

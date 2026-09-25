@@ -1,7 +1,7 @@
-"""Pantalla de configuración: datos del local, acceso, etiquetas y nube.
+"""Pantalla de configuración: datos del local, acceso, etiquetas y servidor.
 
 Los ajustes se persisten en la tabla local ``sys_config`` y se aplican en
-memoria de inmediato. Los cambios de sucursal/nube requieren reiniciar la
+memoria de inmediato. Los cambios de sucursal/servidor requieren reiniciar la
 aplicación (afectan la lectura del inventario y la sincronización).
 """
 
@@ -26,6 +26,7 @@ from app.application.commands import SaveSettingsCommand
 from app.bootstrap import AppServices
 from app.infrastructure.local_config import apply_local_config
 from app.infrastructure.printers.ticket_esc_pos import list_printers, set_configured_printer
+from app.infrastructure.sync.pocketbase_client import DEFAULT_POCKETBASE_URL
 from app.interface.widgets import Card, make_label
 from app.settings import Settings
 
@@ -50,7 +51,7 @@ class SettingsView(QWidget):
         page.addWidget(make_label("Configuración", object_name="pageTitle"))
         page.addWidget(
             make_label(
-                "Ajustes persistentes de esta instalación. La sucursal y la nube se aplican al reiniciar.",
+                "Ajustes persistentes de esta instalación. La sucursal y el servidor se aplican al reiniciar.",
                 object_name="muted",
             )
         )
@@ -216,7 +217,7 @@ class SettingsView(QWidget):
     def _build_cloud_card(self) -> Card:
         topology = self._services.topology
         current_terminal = getattr(topology, "id_terminal", "") or ""
-        card = Card("Sucursal y nube (se aplican al reiniciar)")
+        card = Card("Sucursal y servidor (se aplican al reiniciar)")
         card.add(
             make_label(
                 f"Terminal de caja: {current_terminal or '—'}. El id de terminal no se edita aquí.",
@@ -227,13 +228,14 @@ class SettingsView(QWidget):
         self.branch_edit = QLineEdit(getattr(topology, "id_sucursal", "") or "")
         self.terminal_num_edit = QLineEdit(getattr(topology, "terminal_num", "") or "")
         self.terminal_num_edit.setPlaceholderText("Ej.: 1 (caja 1) o 2 (caja 2)")
-        self.supabase_url = QLineEdit(getattr(topology, "supabase_url", "") or "")
-        self.supabase_anon_key = QLineEdit(getattr(topology, "supabase_anon_key", "") or "")
-        self.supabase_anon_key.setEchoMode(QLineEdit.Password)
+        self.pocketbase_url = QLineEdit(getattr(topology, "pocketbase_url", "") or "")
+        self.pocketbase_url.setPlaceholderText(DEFAULT_POCKETBASE_URL)
+        self.pocketbase_token = QLineEdit(getattr(topology, "pocketbase_token", "") or "")
+        self.pocketbase_token.setEchoMode(QLineEdit.Password)
         form.addRow("ID sucursal:", self.branch_edit)
         form.addRow("Nº de caja (prefijo ticket):", self.terminal_num_edit)
-        form.addRow("Supabase URL:", self.supabase_url)
-        form.addRow("Supabase anon key:", self.supabase_anon_key)
+        form.addRow("PocketBase URL:", self.pocketbase_url)
+        form.addRow("Token de acceso:", self.pocketbase_token)
         card.add_layout(form)
 
         sync_row = QHBoxLayout()
@@ -269,7 +271,7 @@ class SettingsView(QWidget):
             return
         self._sync_button.setEnabled(False)
         self._sync_button.setText("Sincronizando…")
-        self.sync_status.setText("Conectando con la nube…")
+        self.sync_status.setText("Conectando con el servidor…")
         worker = SyncWorker(self._services, parent=self)
         worker.finished_ok.connect(self._sync_done)
         worker.failed.connect(self._sync_failed)
@@ -291,9 +293,18 @@ class SettingsView(QWidget):
     def _sync_failed(self, error: str) -> None:
         self._sync_button.setText("Sincronizar ahora")
         self.sync_status.setText("La última sincronización falló.")
-        QMessageBox.warning(self, "Sincronización", f"No se pudo sincronizar.\n\n{error}")
+        short = error if len(error) <= 160 else error[:157] + "..."
+        QMessageBox.warning(self, "Sincronización", f"No se pudo sincronizar.\n\n{short}")
 
     # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _normalize_url(url: str) -> str:
+        """Antepone ``http://`` a la URL del servidor si le falta el esquema."""
+        url = (url or "").strip().rstrip("/")
+        if url and not url.lower().startswith(("http://", "https://")):
+            url = "http://" + url
+        return url
 
     def _save(self) -> None:
         values = dict(
@@ -313,8 +324,8 @@ class SettingsView(QWidget):
             or self.ticket_printer_combo.currentText().strip(),
             id_sucursal=self.branch_edit.text().strip(),
             terminal_num=self.terminal_num_edit.text().strip(),
-            supabase_url=self.supabase_url.text().strip(),
-            supabase_anon_key=self.supabase_anon_key.text().strip(),
+            pocketbase_url=self._normalize_url(self.pocketbase_url.text()),
+            pocketbase_token=self.pocketbase_token.text().strip(),
         )
         try:
             self._commands.execute(SaveSettingsCommand(**values))
@@ -348,12 +359,12 @@ class SettingsView(QWidget):
                 id_sucursal=values["id_sucursal"],
                 id_terminal=old.id_terminal,
                 terminal_num=values["terminal_num"],
-                supabase_url=values["supabase_url"],
-                supabase_anon_key=values["supabase_anon_key"],
+                pocketbase_url=values["pocketbase_url"],
+                pocketbase_token=values["pocketbase_token"],
             )
 
-        topology_changed = bool(values["id_sucursal"] or values["supabase_url"] or values["supabase_anon_key"])
+        topology_changed = bool(values["id_sucursal"] or values["pocketbase_url"] or values["pocketbase_token"])
         message = "Configuración guardada."
         if topology_changed:
-            message += "\n\nLa sucursal y la nube se aplicarán al reiniciar la aplicación."
+            message += "\n\nLa sucursal y el servidor se aplicarán al reiniciar la aplicación."
         QMessageBox.information(self, "Guardado", message)

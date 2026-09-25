@@ -8,11 +8,12 @@ dependencies = [
     "PySide6>=6.8,<7",
     "SQLAlchemy>=2.0,<3",
     "pypdf>=4.0",
-    "realtime>=2.31,<3",
+    "pocketbase>=0.17,<1",
+    "openpyxl>=3.1",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "pyinstaller>=6"]
 
 [project.scripts]
 kiosco-pos = "app.main:entrypoint"

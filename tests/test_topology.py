@@ -40,7 +40,7 @@ def test_topology_defaults_crean_identidad_local() -> None:
 
 
 def test_topology_overrides_persisten_en_sys_config() -> None:
-    topo = Topology(id_sucursal="SUC-001", id_terminal="CAJA-1", supabase_url="https://x.supabase.co")
+    topo = Topology(id_sucursal="SUC-001", id_terminal="CAJA-1", pocketbase_url="http://192.168.100.6:8090")
     services = build_services(settings=Settings(database_path=":memory:"), topology=topo)
     assert services.topology.id_sucursal == "SUC-001"
     assert services.topology.id_terminal == "CAJA-1"

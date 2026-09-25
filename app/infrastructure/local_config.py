@@ -1,6 +1,6 @@
 """Ajustes locales persistentes en la tabla ``sys_config`` (clave/valor).
 
-Complementa la topología: además de sucursal/terminal/nube, aquí viven los
+Complementa la topología: además de sucursal/terminal/servidor, aquí viven los
 datos del local, moneda, credenciales de acceso e impresora de etiquetas.
 
 Los valores se leen al arrancar (``build_services`` -> ``load_local_config``)

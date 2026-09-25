@@ -253,8 +253,8 @@ def test_guardar_y_recargar_configuracion(tmp_path) -> None:
             label_height_mm=29.0,
             label_dpi=300,
             id_sucursal="LOCAL-A",
-            supabase_url="https://example.supabase.co",
-            supabase_anon_key="public-key",
+            pocketbase_url="http://192.168.100.6:8090",
+            pocketbase_token="pb-token-1",
         )
     )
 
@@ -273,8 +273,8 @@ def test_guardar_y_recargar_configuracion(tmp_path) -> None:
     assert services2.settings.label_height_mm == 29.0
     assert services2.settings.label_dpi == 300
     assert services2.topology.id_sucursal == "LOCAL-A"
-    assert services2.topology.supabase_url == "https://example.supabase.co"
-    assert services2.topology.supabase_anon_key == "public-key"
+    assert services2.topology.pocketbase_url == "http://192.168.100.6:8090"
+    assert services2.topology.pocketbase_token == "pb-token-1"
 
 
 def test_configuracion_parcial_no_borra_el_resto(tmp_path) -> None:

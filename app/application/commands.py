@@ -277,7 +277,7 @@ class DeletePurchaseOrderCommand(Command):
 
 @dataclass(frozen=True, slots=True)
 class SaveSettingsCommand(Command):
-    """Persiste ajustes locales (local store, seguridad, etiquetas, nube).
+    """Persiste ajustes locales (local store, seguridad, etiquetas, servidor).
 
     Los valores ``None`` se ignoran: sólo se actualizan los campos incluidos.
     """
@@ -297,5 +297,5 @@ class SaveSettingsCommand(Command):
     ticket_printer: str | None = None
     id_sucursal: str | None = None
     terminal_num: str | None = None
-    supabase_url: str | None = None
-    supabase_anon_key: str | None = None
+    pocketbase_url: str | None = None
+    pocketbase_token: str | None = None

@@ -28,7 +28,8 @@ GLOBAL_METADATA = Base.metadata
 class SysConfigRow(Base):
     """Configuración clave/valor local: identidad de topología y opciones de sync.
 
-    Guarda ``id_sucursal``, ``id_terminal``, ``supabase_url`` y la anon key.
+    Guarda ``id_sucursal``, ``id_terminal``, ``pocketbase_url`` y el token de
+    acceso del servidor PocketBase (LAN).
     """
 
     __tablename__ = "sys_config"

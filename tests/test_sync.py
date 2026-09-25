@@ -31,8 +31,8 @@ from app.settings import Settings
 
 CLOUD = {
     "id_sucursal": "SUC-1",
-    "supabase_url": "https://fake.supabase.co",
-    "supabase_anon_key": "anon",
+    "pocketbase_url": "http://192.168.100.6:8090",
+    "pocketbase_token": "pb-token-1",
 }
 
 REMOTE_TS = "2026-09-12T10:00:00+00:00"
@@ -300,7 +300,7 @@ def test_pull_anulacion_y_devolucion_replican_stock(tmp_path):
             assert status == ("ANULADA" if receipt == "R-2-000002" else "COMPLETADA")
 
 
-def test_sin_nube_omite_sincronizacion(services):
+def test_sin_servidor_omite_sincronizacion(services):
     from sqlalchemy import text
 
     services.session_factory  # noqa: B018 - fixture disponible

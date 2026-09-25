@@ -11,7 +11,7 @@ class SyncWorker(QThread):
     """Corre :meth:`AppServices.run_sync` fuera del hilo de la interfaz.
 
     ``direction`` elige el sentido de la corrida: ``"both"`` (subir y bajar),
-    ``"push"`` (solo subir el estado local) o ``"pull"`` (solo bajar del hub).
+    ``"push"`` (solo subir el estado local) o ``"pull"`` (solo bajar del servidor).
     """
 
     finished_ok = Signal(object)

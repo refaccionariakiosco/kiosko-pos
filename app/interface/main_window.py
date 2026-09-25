@@ -121,10 +121,10 @@ class MainWindow(QMainWindow):
         self._start_realtime()
 
     def _start_realtime(self) -> None:
-        """Activa la escucha Realtime (CDC de Supabase) y el coordinador de sync.
+        """Activa la escucha realtime (PocketBase SSE) y el coordinador de sync.
 
         Cualquier cambio remoto en la sucursal dispara un pull en caliente; toda
-        mutación local (venta/anulación/stock) dispara un push. Si Realtime no
+        mutación local (venta/anulación/stock) dispara un push. Si realtime no
         está disponible, el sistema sigue funcionando con el sync periódico.
         """
         try:
@@ -132,11 +132,11 @@ class MainWindow(QMainWindow):
             from app.interface.sync_coordinator import SyncCoordinator
 
             topology = self._services.topology
-            url = getattr(topology, "supabase_url", "")
-            token = getattr(topology, "supabase_anon_key", "")
+            url = getattr(topology, "pocketbase_url", "")
+            token = getattr(topology, "pocketbase_token", "")
             branch = topology.id_sucursal or getattr(topology, "default_branch_id", "")
             terminal = topology.id_terminal or ""
-            if not url or not token:
+            if not url:
                 return
 
             coordinator = SyncCoordinator(self._services, parent=self)

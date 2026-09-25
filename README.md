@@ -34,9 +34,9 @@ Es la reconstrucción de la PWA "Kiosco POS" como aplicación nativa de escritor
 
 ## Modelo de datos
 
-Esquema SQLite/Supabase: el catálogo es global (`products`, `categories`), el
+Esquema SQLite/PocketBase: el catálogo es global (`products`, `categories`), el
 inventario físico es por sucursal (`inventory`) y las ventas, caja, apartados y
-pedidos son operativos locales (replicables a la nube).
+pedidos son operativos locales (replicables al servidor PocketBase de la LAN).
 
 ```mermaid
 erDiagram
@@ -75,7 +75,7 @@ Tablas principales:
 | `cash_days` / `cash_movements` | Jornada de caja (apertura/corte) y movimientos de efectivo      |
 | `providers` / `provider_items` | Proveedores y sus listas de precios para cotizar                 |
 | `purchase_orders` / `purchase_order_lines` | Pedidos a proveedor (pendiente/recibido/cancelado)     |
-| `sys_config`          | Clave/valor: identidad de sucursal, terminal y credenciales de nube  |
+| `sys_config`          | Clave/valor: identidad de sucursal, terminal y credenciales del servidor |
 
 ## Instalación
 
@@ -200,14 +200,14 @@ nunca se mezclan con las de otra.
 | ------------------ | ------------------------------------------------------ |
 | `id_sucursal`      | sucursal a la que pertenece el terminal (inventario)   |
 | `id_terminal`      | identifica la caja dentro de la sucursal (se autogenera)|
-| `supabase_url`     | endpoint del proyecto Supabase                          |
-| `supabase_anon_key`| anon key publicable del proyecto                        |
+| `pocketbase_url`   | URL del servidor PocketBase (self-hosted en LAN)        |
+| `pocketbase_token` | token de acceso opcional del servidor PocketBase        |
 
 Se configura al momento de la instalación:
 
 ```bash
 python -m app.main --id-sucursal 0d1f...c92a --id-terminal CAJA-1 \
-    --supabase-url https://xyz.supabase.co --supabase-anon-key eyJ...
+    --pocketbase-url http://192.168.100.6:8090 --pocketbase-token eyJ...
 ```
 
 **Cómo filtra el worker de sincronización** (Fase 4, `QThread`):
@@ -218,17 +218,18 @@ python -m app.main --id-sucursal 0d1f...c92a --id-terminal CAJA-1 \
 - `id_terminal` → cada caja trabaja offline; al subir envía sus ventas y al
   bajar recibe las ventas de sus **terminales hermanos** de la misma sucursal
   para mantener historial y stock consistentes (última escritura gana).
-- Sin `supabase_url`, el terminal opera 100% offline (modo heredado local).
-- En Supabase, el esquema separa `branches` / `terminals` / `products`
-  (catálogo) / `inventory` (por sucursal), con RLS activa: lectura del
-  catálogo vía anon y el inventario expuesto solo por sucursal;
+- Sin `pocketbase_url`, el terminal opera 100% offline (modo heredado local).
+- En PocketBase, las colecciones replicadas (`pos_categories`, `pos_products`,
+  `pos_inventory`, `pos_sales`, `pos_sale_items`, `pos_sale_payments`) se
+  importan con `pocketbase_schema.json`; las reglas públicas de LAN permiten
+  que las cajas lean/escriban y reciban eventos realtime sin configuración extra.
 
 ## Sincronización entre dos cajas (Fase 1, v1)
 
 La app puede operar con **dos cajas de la misma sucursal** que comparten
 bodega: cada una vende con su base local SQLite y un botón **“Sincronizar
 ahora”** (pestaña Configuración) — y una sincronización automática al arrancar —
-intercambia catálogo, inventario y ventas contra el hub Supabase.
+intercambia catálogo, inventario y ventas contra el servidor PocketBase local.
 
 - **Qué se sincroniza (v1):** categorías, productos (catálogo), inventario de
   la sucursal y ventas (incluyendo anulaciones y devoluciones). Al bajar una
@@ -243,22 +244,52 @@ intercambia catálogo, inventario y ventas contra el hub Supabase.
 
 ### Configuración inicial de cada caja
 
-Pestaña **Configuración** → tarjeta *Sucursal y nube*:
+Pestaña **Configuración** → tarjeta *Sucursal y servidor*:
 
 | Campo                | CAJA 1        | CAJA 2        |
 | -------------------- | ------------- | ------------- |
 | ID sucursal          | (mismo en ambas) | (mismo en ambas) |
 | Nº de caja           | `1`           | `2`           |
-| Supabase URL         | la del proyecto | la del proyecto |
-| Supabase anon key    | la del proyecto | la del proyecto |
+| PocketBase URL       | la del servidor LAN | la del servidor LAN |
+| Token de acceso      | (opcional)    | (opcional)    |
 
 Guarde y reinicie. La primera sincronización completa el catálogo e inventario
 de la segunda caja. También puede configurarse al primer arranque:
 
 ```bash
 python -m app.main --id-sucursal SUC-XXXX --terminal-num 2 \
-    --supabase-url https://xyz.supabase.co --supabase-anon-key eyJ...
+    --pocketbase-url http://192.168.100.6:8090
 ```
 
 > Nota: las dos cajas comparten la MISMA bodega. Si además tiene una sucursal
 > distinta, cree otro `id_sucursal` y cada terminal bajará sólo su inventario.
+
+## Instalación (build del instalador para otra terminal)
+
+Para instalar este equipo basado en la caja del servidor, se compila el
+`KioscoPOS.exe` y se copia a la otra terminal.
+
+**En la máquina que compila** (Python 3.11+):
+
+```bash
+pip install -r requirements-dev.txt   # incluye pyinstaller y pocketbase
+pyinstaller KioscoPOS.spec
+```
+
+El resultado queda en `dist/KioscoPOS/` (`KioscoPOS.exe` + dependencias). Se
+copia toda esa carpeta a la otra terminal y se ejecuta `KioscoPOS.exe`; la base
+SQLite local se crea sola junto al exe (carpeta `data/`).
+
+**Conexión al servidor PocketBase de este equipo:**
+
+- El exe apunta por defecto a `http://192.168.100.6:8090` (el servidor de este
+  PC, en la LAN). Si el servidor cambia de IP, se ajusta en la pestaña
+  **Configuración** → *Sucursal y servidor* → PocketBase URL (o con la variable
+  de entorno `POCKETBASE_URL` antes de abrir la app).
+- En el PC que hace de servidor hay que abrir el puerto **8090 (TCP)** en el
+  Firewall de Windows para que las otras terminales puedan conectarse y recibir
+  realtime: `netsh advfirewall firewall add rule name="PocketBase 8090" dir=in action=allow protocol=TCP localport=8090`.
+- El token es opcional: con `pocketbase_schema.json` las colecciones quedan con
+  reglas públicas de LAN (lectura/escritura/realtime sin sesión). Si se quiere
+  proteger el acceso, cree un usuario en PocketBase y use su token en
+  Configuración.

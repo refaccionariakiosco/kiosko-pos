@@ -151,10 +151,10 @@ class AppServices:
             seed_demo_data(self.commands, self.queries)
 
     def run_sync(self, direction: str = "both"):
-        """Ejecuta una sincronización contra el hub (bloqueante).
+        """Ejecuta una sincronización contra el servidor PocketBase (bloqueante).
 
         ``direction`` puede ser ``"both"`` (subir y bajar), ``"push"`` (sólo
-        subir el estado local) o ``"pull"`` (sólo bajar del hub). Se lanza
+        subir el estado local) o ``"pull"`` (sólo bajar del servidor). Se lanza
         desde un QThread en la UI para no congelar la interfaz.
         """
         from app.infrastructure.sync import run_sync

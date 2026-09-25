@@ -1,9 +1,9 @@
-"""Orquestador de sincronización en caliente con debounce (Realtime ↔ local).
+"""Orquestador de sincronización en caliente con debounce (realtime ↔ local).
 
-Convierte eventos disparados (CDC remoto o mutación local) en corridas de sync
-con espera de "quiet period": si hay un estallido de cambios, se agrupa en un
-solo push/pull. Además limita la frecuencia para no abrumar al hub ni entrar en
-bucles push -> realtime -> pull.
+Convierte eventos disparados (realtime remoto de PocketBase o mutación local)
+en corridas de sync con espera de "quiet period": si hay un estallido de
+cambios, se agrupa en un solo push/pull. Además limita la frecuencia para no
+abrumar al servidor ni entrar en bucles push -> realtime -> pull.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ class SyncCoordinator(QObject):
         self._push_timer.timeout.connect(lambda: self._fire("push"))
 
     def notify_remote_change(self, table: str | None = None, record: dict | None = None) -> None:
-        """Un cambio llegó desde el hub (Realtime): agendamos un pull."""
+        """Un cambio llegó desde el servidor (realtime): agendamos un pull."""
         self._arm(self._pull_timer)
 
     def notify_local_change(self) -> None:

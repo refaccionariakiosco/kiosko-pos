@@ -1265,8 +1265,8 @@ class SaveSettingsHandler:
         )
         from app.infrastructure.topology import (
             KEY_BRANCH,
-            KEY_SUPABASE_ANON_KEY,
-            KEY_SUPABASE_URL,
+            KEY_POCKETBASE_TOKEN,
+            KEY_POCKETBASE_URL,
             KEY_TERMINAL_NUM,
         )
 
@@ -1286,8 +1286,8 @@ class SaveSettingsHandler:
             KEY_TICKET_PRINTER: command.ticket_printer,
             KEY_BRANCH: command.id_sucursal,
             KEY_TERMINAL_NUM: None if command.terminal_num is None else str(command.terminal_num).strip(),
-            KEY_SUPABASE_URL: command.supabase_url,
-            KEY_SUPABASE_ANON_KEY: command.supabase_anon_key,
+            KEY_POCKETBASE_URL: command.pocketbase_url,
+            KEY_POCKETBASE_TOKEN: command.pocketbase_token,
         }
         values = {key: value for key, value in values.items() if value is not None}
         if not values:

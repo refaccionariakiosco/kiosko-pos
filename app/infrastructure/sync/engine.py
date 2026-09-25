@@ -12,6 +12,11 @@ gana):
   inventario (el cardex refleja el movimiento de la otra caja), con
   idempotencia garantizada por el número de recibo.
 
+El hub es un servidor PocketBase self-hosted en la red local (LAN). Si el
+servidor no está accesible (``check_connection()`` falla o hay un error de
+red), la corrida se reporta como fallida pero las ventas permanecen en SQLite
+y se reintentan en el siguiente ciclo sin interrumpir la interfaz del POS.
+
 El ticket de cada caja lleva prefijo propio (``R-1-000004`` vs ``R-2-000004``),
 así los folios nunca colisionan aunque dos cajas vendan sin conexión.
 """
@@ -37,7 +42,7 @@ from app.infrastructure.orm import (
     SaleRow,
     StockMovementRow,
 )
-from app.infrastructure.sync.transport import RestClient
+from app.infrastructure.sync.pocketbase_client import PocketBaseClient
 from app.infrastructure.topology import Topology
 
 log = logging.getLogger(__name__)
@@ -79,18 +84,34 @@ def _money(value: object) -> Decimal:
 
 
 class SyncEngine:
-    def __init__(self, session_factory: sessionmaker, topology: Topology, rest_client_factory=RestClient):
+    def __init__(self, session_factory: sessionmaker, topology: Topology, rest_client_factory=PocketBaseClient):
         self._session_factory = session_factory
         self._topology = topology
-        self._client_factory = rest_client_factory or RestClient
+        self._client_factory = rest_client_factory or PocketBaseClient
 
     def run(self, direction: str = "both") -> SyncReport:
         if not self._topology.is_cloud_configured:
-            return SyncReport(skipped_reason="Sin sucursal ni URL de nube configuradas.", ok=True)
+            return SyncReport(skipped_reason="Sin sucursal ni URL de PocketBase configuradas.", ok=True)
 
         started = time.perf_counter()
         report = SyncReport()
-        client = self._client_factory(self._topology.supabase_url, self._topology.supabase_anon_key)
+        client = self._client_factory(self._topology.pocketbase_url, self._topology.pocketbase_token)
+        check_connection = getattr(client, "check_connection", None)
+        if callable(check_connection):
+            try:
+                if not check_connection():
+                    report.ok = False
+                    report.error = (
+                        f"Servidor PocketBase no accesible en "
+                        f"{self._topology.pocketbase_url or getattr(client, 'base_url', '')}."
+                    )
+                    report.duration_ms = int((time.perf_counter() - started) * 1000)
+                    return report
+            except Exception as exc:  # noqa: BLE001 - nunca caducar por el chequeo
+                report.ok = False
+                report.error = f"check_connection: {type(exc).__name__}: {exc}"
+                report.duration_ms = int((time.perf_counter() - started) * 1000)
+                return report
         with self._session_factory() as session:
             try:
                 if direction in ("both", "push"):
@@ -122,7 +143,7 @@ class SyncEngine:
 
     # ------------------------------------------------------------------ PUSH
 
-    def _push_categories(self, session: Session, client: RestClient, report: SyncReport) -> None:
+    def _push_categories(self, session: Session, client: PocketBaseClient, report: SyncReport) -> None:
         rows = session.execute(select(CategoryRow)).scalars().all()
         payload = [
             {"name": row.name, "description": row.description or "", "updated_at": _iso(datetime.now())}
@@ -131,7 +152,7 @@ class SyncEngine:
         client.post("pos_categories", payload, on_conflict="name")
         report.pushed["categories"] = len(payload)
 
-    def _push_products(self, session: Session, client: RestClient, report: SyncReport) -> None:
+    def _push_products(self, session: Session, client: PocketBaseClient, report: SyncReport) -> None:
         categories = {row.id: row.name for row in session.execute(select(CategoryRow)).scalars().all()}
         rows = session.execute(select(ProductRow)).scalars().all()
         payload = [
@@ -151,7 +172,7 @@ class SyncEngine:
         client.post("pos_products", payload, on_conflict="code")
         report.pushed["products"] = len(payload)
 
-    def _push_inventory(self, session: Session, client: RestClient, report: SyncReport) -> None:
+    def _push_inventory(self, session: Session, client: PocketBaseClient, report: SyncReport) -> None:
         branch = self._topology.id_sucursal
         code_by_id = {
             row.id: row.code
@@ -171,7 +192,7 @@ class SyncEngine:
         client.post("pos_inventory", payload, on_conflict="product_code,branch_id")
         report.pushed["inventory"] = len(payload)
 
-    def _push_sales(self, session: Session, client: RestClient, report: SyncReport) -> None:
+    def _push_sales(self, session: Session, client: PocketBaseClient, report: SyncReport) -> None:
         code_by_id = {
             row.id: row.code
             for row in session.execute(select(ProductRow.id, ProductRow.code)).all()
@@ -230,7 +251,7 @@ class SyncEngine:
 
     # ------------------------------------------------------------------ PULL
 
-    def _pull_categories(self, session: Session, client: RestClient, report: SyncReport) -> None:
+    def _pull_categories(self, session: Session, client: PocketBaseClient, report: SyncReport) -> None:
         existing = {row.name for row in session.execute(select(CategoryRow)).scalars().all()}
         added = 0
         for remote in client.fetch("pos_categories"):
@@ -243,7 +264,7 @@ class SyncEngine:
         session.flush()
         report.pulled["categories"] = added
 
-    def _pull_products(self, session: Session, client: RestClient, report: SyncReport) -> None:
+    def _pull_products(self, session: Session, client: PocketBaseClient, report: SyncReport) -> None:
         session.flush()  # materializa categorías creadas en _pull_categories
         existing = {row.code: row for row in session.execute(select(ProductRow)).scalars().all()}
         cat_rows = {row.name: row for row in session.execute(select(CategoryRow)).scalars().all()}
@@ -284,7 +305,7 @@ class SyncEngine:
         report.pulled["products"] = created
         report.pulled["products_updated"] = updated
 
-    def _pull_inventory(self, session: Session, client: RestClient, report: SyncReport) -> None:
+    def _pull_inventory(self, session: Session, client: PocketBaseClient, report: SyncReport) -> None:
         branch = self._topology.id_sucursal
         products = {row.code: row for row in session.execute(select(ProductRow)).scalars().all()}
         inv_by_product: dict[int, InventoryRow] = {
@@ -319,7 +340,7 @@ class SyncEngine:
         report.pulled["inventory"] = created
         report.pulled["inventory_updated"] = updated
 
-    def _pull_sales(self, session: Session, client: RestClient, report: SyncReport) -> None:
+    def _pull_sales(self, session: Session, client: PocketBaseClient, report: SyncReport) -> None:
         branch = self._topology.id_sucursal
         remote_sales = client.fetch("pos_sales", filters={"branch_id": branch}, order="created_at.asc")
         items_by_receipt: dict[str, list[dict]] = {}

@@ -1,4 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_submodules
+
+# Recolecta todo el paquete `app` (varias partes —sync, realtime, coordinador—
+# se importan en tiempo de ejecución y PyInstaller no las detecta por análisis
+# estático). pocketbase/httpx se fuerzan además explícitamente.
+hiddenimports = collect_submodules('app')
+hiddenimports += ['pocketbase', 'httpx']
 
 
 a = Analysis(
@@ -6,11 +13,7 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[('fondologin.jfif', '.')],
-    hiddenimports=[
-        'realtime',
-        'websockets',
-        'pydantic',
-    ],
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

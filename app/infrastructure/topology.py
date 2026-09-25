@@ -1,4 +1,4 @@
-"""Identidad de la instalación (topología sucursal/terminal) y configuración de nube.
+"""Identidad de la instalación (topología sucursal/terminal) y configuración de sync.
 
 Fase 1 del plan upgrade: cada instalación es un terminal de caja que pertenece a
 una sucursal. La identidad vive en la tabla local ``sys_config`` (clave/valor)
@@ -16,16 +16,19 @@ variables):
   cada una sube sus ventas y el worker descarga las ventas de sus terminales
   hermanas (misma sucursal) para mantener el historial y las existencias
   consistentes (última escritura gana).
-- ``supabase_url`` / ``supabase_anon_key``: endpoint de la nube. Si están vacías,
-  el terminal opera 100% offline con su catálogo e inventario local.
+- ``pocketbase_url`` / ``pocketbase_token``: endpoint del servidor PocketBase
+  (self-hosted en la red local/LAN) y token de acceso opcional. Si ``pocketbase_url``
+  está vacía, el terminal opera 100% offline con su catálogo e inventario local.
+  La URL cae por defecto en la variable de entorno ``POCKETBASE_URL``.
 
 Un terminal sin ``id_sucursal`` asignado usa la sucursal sintética
 ``DEFAULT_BRANCH_ID`` (modo single-site heredado): el stock sigue funcionando
-igual que antes de la migración, sin mezclarse con la nube.
+igual que antes de la migración, sin mezclarse con la nube del servidor.
 """
 
 from __future__ import annotations
 
+import os
 import re
 import uuid
 from dataclasses import dataclass
@@ -37,13 +40,32 @@ from sqlalchemy.orm import Session
 KEY_BRANCH = "id_sucursal"
 KEY_TERMINAL = "id_terminal"
 KEY_TERMINAL_NUM = "terminal_num"
+KEY_POCKETBASE_URL = "pocketbase_url"
+KEY_POCKETBASE_TOKEN = "pocketbase_token"
+
+#: Alias de las claves históricas de Supabase (migración): siguen leyéndose
+#: como respaldo para instalaciones existentes.
 KEY_SUPABASE_URL = "supabase_url"
 KEY_SUPABASE_ANON_KEY = "supabase_anon_key"
 
-#: Sucursal sintética para instalaciones todavía no asociadas a la nube.
+#: Porta la URL/token de PocketBase desde el entorno si no se configuró explícito.
+ENV_POCKETBASE_URL = "POCKETBASE_URL"
+ENV_POCKETBASE_TOKEN = "POCKETBASE_TOKEN"
+
+#: Sucursal sintética para instalaciones todavía no asociadas al servidor.
 DEFAULT_BRANCH_ID = "BRANCH-LOCAL"
 
-_TOPOLOGY_KEYS = (KEY_BRANCH, KEY_TERMINAL, KEY_TERMINAL_NUM, KEY_SUPABASE_URL, KEY_SUPABASE_ANON_KEY)
+_TOPOLOGY_KEYS = (
+    KEY_BRANCH,
+    KEY_TERMINAL,
+    KEY_TERMINAL_NUM,
+    KEY_POCKETBASE_URL,
+    KEY_POCKETBASE_TOKEN,
+)
+
+#: Claves heredadas de Supabase: se leen también para respaldar la migración
+#: de instalaciones ya configuradas (tienen prioridad las nuevas).
+_LEGACY_KEYS = (KEY_SUPABASE_URL, KEY_SUPABASE_ANON_KEY)
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,8 +75,8 @@ class Topology:
     id_sucursal: str = ""
     id_terminal: str = ""
     terminal_num: str = ""
-    supabase_url: str = ""
-    supabase_anon_key: str = ""
+    pocketbase_url: str = ""
+    pocketbase_token: str = ""
 
     @property
     def effective_branch_id(self) -> str:
@@ -63,7 +85,7 @@ class Topology:
 
     @property
     def is_cloud_configured(self) -> bool:
-        return bool(self.id_sucursal and self.supabase_url)
+        return bool(self.id_sucursal and self.pocketbase_url)
 
     @property
     def receipt_prefix(self) -> str:
@@ -80,8 +102,8 @@ class Topology:
             KEY_BRANCH: self.id_sucursal,
             KEY_TERMINAL: self.id_terminal,
             KEY_TERMINAL_NUM: self.terminal_num,
-            KEY_SUPABASE_URL: self.supabase_url,
-            KEY_SUPABASE_ANON_KEY: self.supabase_anon_key,
+            KEY_POCKETBASE_URL: self.pocketbase_url,
+            KEY_POCKETBASE_TOKEN: self.pocketbase_token,
         }
 
     def sync_filters(self) -> dict[str, str]:
@@ -115,15 +137,27 @@ def load_topology(session: Session) -> Topology:
     from app.infrastructure.orm import SysConfigRow
 
     rows = session.execute(
-        select(SysConfigRow).where(SysConfigRow.key.in_(_TOPOLOGY_KEYS))
+        select(SysConfigRow).where(SysConfigRow.key.in_(_TOPOLOGY_KEYS + _LEGACY_KEYS))
     ).scalars().all()
     values = {r.key: r.value for r in rows}
+    # Respaldo de instalaciones configuradas antes de la migración a PocketBase
+    # y de la variable de entorno (POCKETBASE_URL por defecto en la LAN).
+    pocketbase_url = (
+        values.get(KEY_POCKETBASE_URL, "")
+        or values.get(KEY_SUPABASE_URL, "")
+        or os.environ.get(ENV_POCKETBASE_URL, "")
+    )
+    pocketbase_token = (
+        values.get(KEY_POCKETBASE_TOKEN, "")
+        or values.get(KEY_SUPABASE_ANON_KEY, "")
+        or os.environ.get(ENV_POCKETBASE_TOKEN, "")
+    )
     return Topology(
         id_sucursal=values.get(KEY_BRANCH, ""),
         id_terminal=values.get(KEY_TERMINAL, ""),
         terminal_num=values.get(KEY_TERMINAL_NUM, ""),
-        supabase_url=values.get(KEY_SUPABASE_URL, ""),
-        supabase_anon_key=values.get(KEY_SUPABASE_ANON_KEY, ""),
+        pocketbase_url=pocketbase_url,
+        pocketbase_token=pocketbase_token,
     )
 
 
