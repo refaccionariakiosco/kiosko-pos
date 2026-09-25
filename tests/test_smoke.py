@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import html
 import os
+from decimal import Decimal
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 
@@ -188,7 +190,7 @@ def test_apartados_page_y_dialogos(qapp, ui_services, store_settings):
     create.abono.setValue(20.0)
     values = create.values()
     assert values["client_name"] == "Juan"
-    assert values["items"] == [(product.code, 1)]
+    assert [(code, qty) for code, qty, _price in values["items"]] == [(product.code, 1)]
     assert values["initial_abono"].as_decimal() == Decimal("20.00")
 
 
@@ -218,6 +220,103 @@ def test_sell_view_ajuste_monto_doble_click(qapp, ui_services, store_settings):
     view._clear_cart()
     assert view.total_label.text() == "$ 0,00"
     assert view.discount_label.isHidden()
+
+
+def test_sell_view_precio_inline_actualiza_total(qapp, ui_services, store_settings):
+    """Editar el precio de la columna Precio recalcula subtotal y total del ticket."""
+    from PySide6.QtWidgets import QDoubleSpinBox
+
+    from app.application.commands import CreateCategoryCommand, CreateProductCommand
+    from app.interface.sell_view import SellView, cart_price
+
+    c = ui_services.commands
+    cat = c.execute(CreateCategoryCommand(name="BEBIDAS"))
+    product = c.execute(
+        CreateProductCommand(code="7501055302082", name="Agua 500ml", unit_price="20", stock=10, category_id=cat.id)
+    )
+
+    view = SellView(c, ui_services.queries, store_settings)
+    view.refresh()
+    view._add_product(product)
+    view._add_product(product)
+    assert view.total_label.text() == "$ 40,00"
+
+    table = view._current_table()
+    spin = table.cellWidget(0, 2)
+    assert isinstance(spin, QDoubleSpinBox)
+    assert spin.value() == 20.0
+
+    # El cajero baja el precio de la partida a 15.
+    spin.setValue(15.0)
+    spin.editingFinished.emit()
+
+    assert cart_price(view._current_cart()[0]).as_decimal() == Decimal("15.00")
+    assert table.item(0, 4).text() == "$ 30,00"
+    assert view.total_label.text() == "$ 30,00"
+    # El precio del producto en catálogo no se toca.
+    assert product.unit_price.as_decimal() == Decimal("20.00")
+
+
+def test_sell_view_override_sobrevive_a_agregar_mas_unidades(qapp, ui_services, store_settings):
+    from PySide6.QtWidgets import QDoubleSpinBox
+
+    from app.application.commands import CreateCategoryCommand, CreateProductCommand
+    from app.interface.sell_view import SellView, cart_price
+
+    c = ui_services.commands
+    cat = c.execute(CreateCategoryCommand(name="BEBIDAS"))
+    product = c.execute(
+        CreateProductCommand(code="7501055302082", name="Agua 500ml", unit_price="20", stock=10, category_id=cat.id)
+    )
+
+    view = SellView(c, ui_services.queries, store_settings)
+    view.refresh()
+    view._add_product(product)
+    spin = view._current_table().cellWidget(0, 2)
+    assert isinstance(spin, QDoubleSpinBox)
+    spin.setValue(15.0)
+    spin.editingFinished.emit()
+
+    # Agregar otra unidad del mismo producto no pierde el precio ajustado.
+    view._add_product(product)
+    assert len(view._current_cart()) == 1
+    assert view._current_cart()[0]["qty"] == 2
+    assert cart_price(view._current_cart()[0]).as_decimal() == Decimal("15.00")
+    assert view.total_label.text() == "$ 30,00"
+
+
+def test_apartado_dialog_precio_inline(qapp, ui_services):
+    from PySide6.QtWidgets import QDoubleSpinBox
+
+    from app.application.commands import CreateCategoryCommand, CreateProductCommand
+    from app.interface.dialogs import ApartadoDialog
+
+    c = ui_services.commands
+    cat = c.execute(CreateCategoryCommand(name="BEBIDAS"))
+    product = c.execute(
+        CreateProductCommand(code="7501055302082", name="Agua 500ml", unit_price="20", stock=10, category_id=cat.id)
+    )
+
+    dialog = ApartadoDialog(ui_services.queries)
+    dialog.client_name.setText("Ana")
+    dialog._add_by_text("Agua")
+    dialog._add_by_text("Agua")
+    dialog._add_by_text("Agua")
+
+    spin = dialog.items_table.cellWidget(0, 1)
+    assert isinstance(spin, QDoubleSpinBox)
+    assert spin.value() == 20.0
+
+    spin.setValue(18.0)
+    spin.editingFinished.emit()
+
+    assert dialog.items_table.item(0, 3).text() == "$ 54,00"
+    assert "Total: $ 54,00" in dialog.total_label.text()
+
+    values = dialog.values()
+    code, qty, price = values["items"][0]
+    assert (code, qty) == (product.code, 3)
+    assert price.as_decimal() == Decimal("18.00")
 
 
 def test_login_dialog_credenciales(qapp, ui_services, store_settings):
@@ -513,3 +612,80 @@ def test_barcode_html_escanible(ui_services, store_settings):
     assert f"N. {result.receipt_number}" in receipt_html
     assert "background-color:#111111" in receipt_html
     assert f">{html.escape(result.receipt_number)}</div>" in receipt_html
+
+
+def _make_product(commands, *, code="7501055302082", name="Agua 500ml", stock=10):
+    from app.application.commands import CreateCategoryCommand, CreateProductCommand
+
+    cat = commands.execute(CreateCategoryCommand(name="BEBIDAS"))
+    return commands.execute(
+        CreateProductCommand(code=code, name=name, unit_price="20", stock=stock, category_id=cat.id)
+    )
+
+
+def test_inventory_view_fija_cantidad_inline(qapp, ui_services):
+    """Doble clic en la columna Stock fija la cantidad y lo asienta en el cardex.
+
+    El inventario local es la suma de deltas, así que editar la cantidad se
+    traduce en un ajuste con movimiento ``CONTEO`` que después se replica al hub.
+    """
+    from app.application.queries import GetCatalogQuery, GetStockMovementsQuery
+    from app.interface.inventory_view import REASON_COUNT, STOCK_COLUMN, InventoryView
+
+    commands, queries = ui_services.commands, ui_services.queries
+    product = _make_product(commands)
+
+    view = InventoryView(commands, queries)
+    view.refresh()
+    row = 0
+    assert view.table.item(row, STOCK_COLUMN).text() == "10"
+    assert view.table.item(row, STOCK_COLUMN).flags() & Qt.ItemIsEditable
+
+    # El cajero cuenta 7 unidades y confirma la edición inline.
+    index = view.table.model().index(row, STOCK_COLUMN)
+    editor = view.stock_delegate.createEditor(view, None, index)
+    view.stock_delegate.setEditorData(editor, index)
+    assert editor.value() == 10
+    editor.setValue(7)
+    view.stock_delegate.setModelData(editor, view.table.model(), index)
+
+    refreshed = {p.id: p for p in queries.ask(GetCatalogQuery(include_inactive=False))}[product.id]
+    assert refreshed.stock == 7
+
+    movements = queries.ask(GetStockMovementsQuery(product_id=product.id))
+    assert [(m.delta, m.reason) for m in movements] == [(-3, REASON_COUNT)]
+    assert "10 -> 7" in movements[0].note
+    # La tabla se refresca sola con la cantidad nueva.
+    assert view.table.item(row, STOCK_COLUMN).text() == "7"
+
+
+def test_inventory_view_conteo_ignorado_si_no_cambia(qapp, ui_services):
+    """Confirmar el mismo número no genera un movimiento inútil."""
+    from app.application.queries import GetStockMovementsQuery
+    from app.interface.inventory_view import STOCK_COLUMN, InventoryView
+
+    commands, queries = ui_services.commands, ui_services.queries
+    product = _make_product(commands)
+
+    view = InventoryView(commands, queries)
+    view.refresh()
+    view._on_stock_edited(0, 10)  # mismo valor
+
+    assert queries.ask(GetStockMovementsQuery(product_id=product.id)) == []
+
+
+def test_inventory_view_solo_stock_es_editable(qapp, ui_services):
+    """El resto de columnas es de sólo lectura: nada de editar precio o estado."""
+    from app.interface.inventory_view import STOCK_COLUMN, InventoryView
+
+    commands, queries = ui_services.commands, ui_services.queries
+    _make_product(commands)
+    view = InventoryView(commands, queries)
+    view.refresh()
+
+    editable = [
+        col
+        for col in range(view.table.columnCount())
+        if view.table.item(0, col).flags() & Qt.ItemIsEditable
+    ]
+    assert editable == [STOCK_COLUMN]
