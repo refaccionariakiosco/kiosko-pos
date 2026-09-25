@@ -28,9 +28,17 @@ logs/
 respaldo.fdb
 ultimostock.xlsx
 .stock_tmp/
+*.csv
+
+# NOTA: pocketbase_schema.json SÍ se versiona (define las colecciones del hub)
+
+# Secretos: NUNCA versionar el .env real (POCKETBASE_TOKEN)
+.env
+.env.*
+!.env.example
 
 # Anotaciones de scratch
-uprade.txt
+upgrade.txt
 
 # Herramientas y caches
 .pytest_cache/
