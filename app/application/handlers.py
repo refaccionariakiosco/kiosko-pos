@@ -27,6 +27,7 @@ from app.application.read_models import (
     SaleItemDTO,
     StockMovementDTO,
     TopProductDTO,
+    ValeDTO,
 )
 from app.domain.entities import (
     Apartado,
@@ -35,6 +36,7 @@ from app.domain.entities import (
     CashDay,
     CashMovement,
     Category,
+    Payment,
     PaymentMethod,
     Product,
     Provider,
@@ -43,19 +45,24 @@ from app.domain.entities import (
     PurchaseOrderLine,
     Sale,
     StockMovement,
+    Vale,
 )
 from app.domain.exceptions import (
     ApartadoNotFoundError,
     CashDayAlreadyOpenError,
     DomainError,
     DuplicateProductCodeError,
+    InsufficientValeBalanceError,
     NoOpenCashDayError,
     ProductNotFoundError,
     ProviderNotFoundError,
     SaleNotFoundError,
+    ValeAlreadyVoidedError,
+    ValeNotFoundError,
     ValidationError,
 )
 from app.domain.value_objects import Money
+from app.infrastructure.topology import DEFAULT_BRANCH_ID
 from app.application.commands import (
     AddAbonoCommand,
     AdjustStockCommand,
@@ -85,6 +92,7 @@ from app.application.commands import (
     UpdateProductCommand,
     UpdateProviderCommand,
     VoidSaleCommand,
+    VoidValeCommand,
 )
 from app.application.queries import (
     GetApartadoQuery,
@@ -100,9 +108,11 @@ from app.application.queries import (
     GetSaleQuery,
     GetSalesHistoryQuery,
     GetStockMovementsQuery,
+    GetValeQuery,
     ListProviderItemsQuery,
     ListProvidersQuery,
     ListPurchaseOrdersQuery,
+    ListValesQuery,
 )
 from app.domain.events import ApartadoCreated
 
@@ -210,6 +220,31 @@ def _product_dto(product: Product, category_names: dict[int, str] | None = None)
     )
 
 
+def _current_username(uow) -> str:
+    """Cajero con la sesión abierta, para dejar constancia de quién emitió el vale."""
+    from sqlalchemy import text
+
+    row = uow.session.execute(
+        text("SELECT value FROM sys_config WHERE key = 'login_username'")
+    ).scalar_one_or_none()
+    return (row or "").strip()
+
+
+def _vale_dto(vale: Vale) -> ValeDTO:
+    return ValeDTO(
+        id=vale.id or 0,
+        code=vale.code,
+        amount=vale.amount,
+        balance=vale.balance,
+        status=vale.status,
+        branch_id=vale.branch_id,
+        receipt_number=vale.receipt_number,
+        issued_by=vale.issued_by,
+        note=vale.note,
+        created_at=vale.created_at,
+    )
+
+
 def _sale_dto(sale: Sale) -> SaleDTO:
     return SaleDTO(
         id=sale.id or 0,
@@ -224,6 +259,7 @@ def _sale_dto(sale: Sale) -> SaleDTO:
                 unit_price=item.unit_price,
                 subtotal=item.subtotal,
                 refunded_qty=item.refunded_qty,
+                price_overridden=item.price_overridden,
             )
             for item in sale.items
         ],
@@ -269,6 +305,7 @@ def _apartado_dto(apartado: Apartado) -> ApartadoDTO:
                 quantity=item.quantity,
                 unit_price=item.unit_price,
                 subtotal=item.subtotal,
+                price_overridden=item.price_overridden,
             )
             for item in apartado.items
         ],
@@ -425,7 +462,8 @@ class CompleteSaleHandler:
             products: dict[int, Product] = {}
             for item in command.items:
                 product = _require_product(uow.products.get_by_code(item.code), code=item.code)
-                sale.add_item(product, item.quantity)
+                line_price = Money.from_input(item.unit_price) if item.unit_price is not None else None
+                sale.add_item(product, item.quantity, unit_price=line_price)
                 products[product.id or 0] = product
                 uow.movements.add(
                     StockMovement(
@@ -444,14 +482,44 @@ class CompleteSaleHandler:
             if command.discount is not None:
                 sale.apply_discount(Money.from_input(command.discount))
 
+            # Redención de un vale previo: se aplica sólo lo que alcance del
+            # total pendiente y el resto del saldo queda para otra compra.
+            redeemed: Vale | None = None
+            vale_applied = Money.zero()
+            if (command.vale_code or "").strip():
+                redeemed, applied = self._redeem_vale(
+                    uow, command.vale_code.strip(), sale.total - sale.paid_amount()
+                )
+                vale_applied = redeemed.redeem(applied)
+                uow.vales.update(redeemed)
+                uow.vales.record_usage(
+                    redeemed,
+                    vale_applied,
+                    sale_id=sale.id or 0,
+                    receipt_number=receipt,
+                    branch_id=uow.branch_id or DEFAULT_BRANCH_ID,
+                )
+                sale.add_payment(PaymentMethod.VALE, vale_applied)
+
             sale.finalize()
             saved = uow.sales.add(sale)
             sale.id = saved.id
             for product in products.values():
                 uow.products.update_stock(product.id or 0, product.stock)
 
+            # El vale se guarda recién con la venta persistida para poder
+            # colgarle el id del cobro al que pertenece.
+            issued: Vale | None = None
+            if command.issue_vale:
+                issued = self._issue_vale(
+                    uow, command.vale_amount, sale_id=sale.id or 0, receipt_number=receipt
+                )
+
             sale.emit_completed()
             uow.track(sale, *products.values())
+            for vale in (redeemed, issued):
+                if vale is not None:
+                    uow.track(vale)
             uow.commit()
             return CompleteSaleResult(
                 sale_id=sale.id or 0,
@@ -459,7 +527,50 @@ class CompleteSaleHandler:
                 total=sale.total,
                 change_amount=sale.change(),
                 sale=_sale_dto(sale),
+                issued_vale=_vale_dto(issued) if issued is not None else None,
+                vale_applied=vale_applied,
+                vale_remaining=redeemed.balance if redeemed is not None else Money.zero(),
             )
+
+    @staticmethod
+    def _redeem_vale(uow, code: str, pending: Money) -> tuple[Vale, Money]:
+        """Valida el vale para esta sucursal y calcula cuánto se puede aplicar."""
+        vale = uow.vales.get_by_code(code)
+        if vale is None:
+            raise ValeNotFoundError(f"No existe el vale {code!r}.")
+        if pending <= Money.zero():
+            raise ValidationError("El total ya está cubierto: no hay nada que aplicar con el vale.")
+        if vale.status == Vale.STATUS_VOID:
+            raise ValeAlreadyVoidedError(f"El vale {vale.code} está anulado.")
+        if not vale.is_usable():
+            raise InsufficientValeBalanceError(f"El vale {vale.code} no tiene saldo disponible.")
+        # El vale no viaja entre sucursales: cada caja redime sólo los suyos.
+        if uow.branch_id and vale.branch_id and vale.branch_id != uow.branch_id:
+            raise ValidationError(
+                f"El vale {vale.code} pertenece a otra sucursal y no se puede usar aquí."
+            )
+        return vale, min(vale.balance, pending)
+
+    @staticmethod
+    def _issue_vale(uow, amount, *, sale_id: int, receipt_number: str) -> Vale:
+        """Emite un vale por el importe que definió el cajero en el cobro."""
+        if amount is None:
+            raise ValidationError("Definí el importe del vale a entregar.")
+        value = Money.from_input(amount)
+        if value <= Money.zero():
+            raise ValidationError("El importe del vale debe ser mayor a cero.")
+        vale = Vale(
+            code=uow.vales.next_code(),
+            amount=value,
+            balance=value,
+            branch_id=uow.branch_id or DEFAULT_BRANCH_ID,
+            sale_id=sale_id or None,
+            receipt_number=receipt_number,
+            issued_by=_current_username(uow),
+            note=f"Emitido en la venta {receipt_number}",
+        )
+        vale.record_issued()
+        return uow.vales.add(vale)
 
 
 class VoidSaleHandler:
@@ -486,10 +597,50 @@ class VoidSaleHandler:
                     )
                 )
                 uow.track(product)
+            # Si esta venta entregó un vale, se anula con ella: el cliente no
+            # puede conservar crédito de una compra que ya no existe.
+            self._void_emitted_vale(uow, sale)
             uow.sales.update(sale)
             uow.track(sale)
             uow.commit()
             return _sale_dto(sale)
+
+    @staticmethod
+    def _void_emitted_vale(uow, sale: Sale) -> None:
+        """Anula el vale que emitió esta venta, si todavía tiene saldo.
+
+        Un vale ya consumido o ya anulado se deja como está: su saldo se gastó
+        en compras reales y la anulación de la venta no debe fallar por eso.
+        """
+        for candidate in uow.vales.list():
+            if candidate.sale_id != (sale.id or 0):
+                continue
+            if not candidate.is_usable():
+                return
+            candidate.void(f"Anulación de la venta {sale.receipt_number}")
+            uow.vales.update(candidate)
+            uow.track(candidate)
+            return
+
+
+class VoidValeHandler:
+    def __init__(self, uow_factory: UowFactory):
+        self._uow = uow_factory
+
+    def handle(self, command: VoidValeCommand) -> ValeDTO:
+        with self._uow() as uow:
+            vale = uow.vales.get_by_code(command.code) if (command.code or "").strip() else None
+            if vale is None:
+                vale = uow.vales.get(command.vale_id)
+            if vale is None:
+                raise ValeNotFoundError("El vale indicado no existe.")
+            if vale.status == Vale.STATUS_VOID:
+                raise ValeAlreadyVoidedError(f"El vale {vale.code} ya está anulado.")
+            vale.void(command.reason)
+            uow.vales.update(vale)
+            uow.track(vale)
+            uow.commit()
+            return _vale_dto(vale)
 
 
 class RefundSaleItemHandler:
@@ -1237,6 +1388,33 @@ class ListPurchaseOrdersHandler:
                 _purchase_order_dto(o)
                 for o in uow.purchase_orders.list(status=status, provider=query.provider)
             ]
+
+
+class ListValesHandler:
+    def __init__(self, uow_factory: UowFactory):
+        self._uow = uow_factory
+
+    def handle(self, query: ListValesQuery) -> list[ValeDTO]:
+        with self._uow() as uow:
+            status = None if query.status in (None, "TODOS") else query.status
+            return [
+                _vale_dto(v)
+                for v in uow.vales.list(status=status, term=query.term, limit=query.limit)
+            ]
+
+
+class GetValeHandler:
+    def __init__(self, uow_factory: UowFactory):
+        self._uow = uow_factory
+
+    def handle(self, query: GetValeQuery) -> ValeDTO | None:
+        with self._uow() as uow:
+            vale = None
+            if (query.code or "").strip():
+                vale = uow.vales.get_by_code(query.code)
+            elif query.vale_id:
+                vale = uow.vales.get(query.vale_id)
+            return _vale_dto(vale) if vale is not None else None
 
 
 class SaveSettingsHandler:

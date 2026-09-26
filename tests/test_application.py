@@ -16,18 +16,26 @@ from app.application.commands import (
     SetProductActiveCommand,
     UpdateProductCommand,
     VoidSaleCommand,
+    VoidValeCommand,
 )
 from app.application.queries import (
     GetCatalogQuery,
     GetDashboardQuery,
     GetSaleQuery,
     GetSalesHistoryQuery,
+    GetValeQuery,
+    ListValesQuery,
 )
 from app.domain.exceptions import (
     DomainError,
     DuplicateProductCodeError,
     InsufficientStockError,
+    InsufficientValeBalanceError,
     ProductNotFoundError,
+    SaleNotFoundError,
+    ValeAlreadyVoidedError,
+    ValeNotFoundError,
+    ValidationError,
 )
 
 
@@ -246,3 +254,335 @@ def test_dashboard_mide_bien_el_dia(services):
     assert dash.today_revenue_by_method["EFECTIVO"].as_decimal() == Decimal("40.00")
     assert dash.today_revenue_by_method["TARJETA"].as_decimal() == Decimal("30.00")
     assert dash.top_products[0].name == "Agua"
+
+
+# --------------------------------------------------------------------------- #
+# Precio por partida persistido
+# --------------------------------------------------------------------------- #
+
+
+def test_venta_persiste_precio_por_partida(services):
+    product = make_product(services, price="20", stock=5)
+    result = services.commands.execute(
+        CompleteSaleCommand(
+            items=(SaleItemRequest(code=product.code, quantity=3, unit_price="15"),),
+            payments=(SalePaymentRequest(method="EFECTIVO", amount="45"),),
+        )
+    )
+    assert result.total.as_decimal() == Decimal("45.00")
+
+    sale = services.queries.ask(GetSaleQuery(sale_id=result.sale_id))
+    item = sale.items[0]
+    assert item.unit_price.as_decimal() == Decimal("15.00")
+    assert item.subtotal.as_decimal() == Decimal("45.00")
+    assert item.price_overridden is True
+
+
+def test_venta_sin_override_no_marca_la_partida(services):
+    product = make_product(services, price="20", stock=5)
+    result = services.commands.execute(
+        CompleteSaleCommand(
+            items=(SaleItemRequest(code=product.code, quantity=2),),
+            payments=(SalePaymentRequest(method="EFECTIVO", amount="40"),),
+        )
+    )
+    sale = services.queries.ask(GetSaleQuery(sale_id=result.sale_id))
+    assert sale.items[0].unit_price.as_decimal() == Decimal("20.00")
+    assert sale.items[0].price_overridden is False
+
+
+def test_override_mas_descuento_global_se_apilan(services):
+    """El precio por partida y el ajuste de monto del ticket se combinan."""
+    product = make_product(services, price="20", stock=10)
+    result = services.commands.execute(
+        CompleteSaleCommand(
+            items=(SaleItemRequest(code=product.code, quantity=2, unit_price="15"),),
+            payments=(SalePaymentRequest(method="EFECTIVO", amount="25"),),
+            discount="5",
+        )
+    )
+    # 2 x 15 = 30 de subtotal, menos 5 de descuento global.
+    assert result.sale.subtotal.as_decimal() == Decimal("30.00")
+    assert result.sale.discount.as_decimal() == Decimal("5.00")
+    assert result.total.as_decimal() == Decimal("25.00")
+    assert result.change_amount.as_decimal() == Decimal("0.00")
+
+
+def test_venta_rechaza_precio_no_positivo(services):
+    from app.domain.value_objects import Money
+
+    product = make_product(services, price="20", stock=5)
+    with pytest.raises(DomainError):
+        services.commands.execute(
+            CompleteSaleCommand(
+                items=(SaleItemRequest(code=product.code, quantity=1, unit_price=Money("0")),),
+                payments=(SalePaymentRequest(method="EFECTIVO", amount="1"),),
+            )
+        )
+    assert services.queries.ask(GetCatalogQuery())[0].stock == 5
+
+
+# --------------------------------------------------------------------------- #
+# Vales de compra: se emiten con tarjeta y se aplican en compras siguientes
+# --------------------------------------------------------------------------- #
+
+
+def sell_card(services, product, quantity, total, *, issue_vale=False, vale_amount=None):
+    """Venta pagada con tarjeta, que es la que puede dejar vale."""
+    return services.commands.execute(
+        CompleteSaleCommand(
+            items=(SaleItemRequest(code=product.code, quantity=quantity),),
+            payments=(SalePaymentRequest(method="TARJETA", amount=total),),
+            issue_vale=issue_vale,
+            vale_amount=vale_amount,
+        )
+    )
+
+
+def test_venta_con_tarjeta_emite_vale_si_lo_pide_el_cajero(services):
+    product = make_product(services, price="100", stock=10)
+
+    result = sell_card(services, product, 2, "200", issue_vale=True, vale_amount="150")
+
+    assert result.issued_vale is not None
+    assert result.issued_vale.code.startswith("V-")
+    assert result.issued_vale.amount.as_decimal() == Decimal("150.00")
+    assert result.issued_vale.balance.as_decimal() == Decimal("150.00")
+    assert result.issued_vale.status == "ACTIVO"
+    assert result.issued_vale.receipt_number == result.receipt_number
+
+
+def test_venta_con_tarjeta_no_emite_vale_si_no_lo_piden(services):
+    product = make_product(services, price="100", stock=10)
+
+    result = sell_card(services, product, 2, "200")
+
+    assert result.issued_vale is None
+    assert services.queries.ask(ListValesQuery()) == []
+
+
+def test_vale_se_aplica_completo_a_la_compra_siguiente(services):
+    product = make_product(services, price="100", stock=20)
+    issued = sell_card(services, product, 2, "200", issue_vale=True, vale_amount="80").issued_vale
+
+    result = services.commands.execute(
+        CompleteSaleCommand(
+            items=(SaleItemRequest(code=product.code, quantity=1),),
+            payments=(),
+            vale_code=issued.code,
+        )
+    )
+
+    assert result.vale_applied.as_decimal() == Decimal("80.00")
+    assert result.vale_remaining.as_decimal() == Decimal("0.00")
+    assert result.sale.total.as_decimal() == Decimal("100.00")
+    # El pago entra como VALE, así que el corte lo ve como crédito aplicado.
+    assert [p.method for p in result.sale.payments] == ["VALE"]
+    restante = services.queries.ask(GetValeQuery(code=issued.code))
+    assert restante.status == "AGOTADO"
+
+
+def test_vale_se_aplica_parcialmente_y_deja_saldo_para_despues(services):
+    product = make_product(services, price="100", stock=20)
+    issued = sell_card(services, product, 2, "200", issue_vale=True, vale_amount="80").issued_vale
+
+    result = services.commands.execute(
+        CompleteSaleCommand(
+            items=(SaleItemRequest(code=product.code, quantity=1),),
+            payments=(SalePaymentRequest(method="EFECTIVO", amount="20"),),
+            vale_code=issued.code,
+        )
+    )
+
+    # El vale cubre 80 de los 100; los 20 restantes se cobran en efectivo.
+    assert result.vale_applied.as_decimal() == Decimal("80.00")
+    assert result.vale_remaining.as_decimal() == Decimal("0.00")
+    restante = services.queries.ask(GetValeQuery(code=issued.code))
+    assert restante.status == "AGOTADO"
+    assert restante.balance.as_decimal() == Decimal("0.00")
+
+
+def test_vale_no_alcanza_y_se_cobra_el_diferencia_en_efectivo(services):
+    product = make_product(services, price="100", stock=20)
+    issued = sell_card(services, product, 1, "100", issue_vale=True, vale_amount="30").issued_vale
+
+    result = services.commands.execute(
+        CompleteSaleCommand(
+            items=(SaleItemRequest(code=product.code, quantity=1),),
+            payments=(SalePaymentRequest(method="EFECTIVO", amount="70"),),
+            vale_code=issued.code,
+        )
+    )
+
+    assert result.vale_applied.as_decimal() == Decimal("30.00")
+    # 30 de vale + 70 en efectivo cubren los 100 del producto.
+    pagado = sum(p.amount.as_decimal() for p in result.sale.payments)
+    assert pagado == Decimal("100.00")
+    assert [p.method for p in result.sale.payments] == ["EFECTIVO", "VALE"]
+
+
+def test_anular_venta_anula_el_vale_que_emitio(services):
+    product = make_product(services, price="100", stock=20)
+    result = sell_card(services, product, 2, "200", issue_vale=True, vale_amount="150")
+
+    services.commands.execute(VoidSaleCommand(sale_id=result.sale_id, reason="Error de cajero"))
+
+    vale = services.queries.ask(GetValeQuery(code=result.issued_vale.code))
+    assert vale.status == "ANULADO"
+    assert vale.balance.as_decimal() == Decimal("0.00")
+    assert vale.is_usable is False
+
+
+def test_anular_venta_con_vale_ya_gastado_no_falla(services):
+    """El vale se consumió en otra compra: la anulación no debe romperse."""
+    product = make_product(services, price="100", stock=30)
+    result = sell_card(services, product, 1, "100", issue_vale=True, vale_amount="100")
+    services.commands.execute(
+        CompleteSaleCommand(
+            items=(SaleItemRequest(code=product.code, quantity=1),),
+            payments=(),
+            vale_code=result.issued_vale.code,
+        )
+    )
+
+    anulada = services.commands.execute(
+        VoidSaleCommand(sale_id=result.sale_id, reason="Error de cajero")
+    )
+
+    assert anulada.status == "ANULADA"
+    vale = services.queries.ask(GetValeQuery(code=result.issued_vale.code))
+    assert vale.status == "AGOTADO"
+
+
+def test_vale_de_otra_sucursal_no_se_puede_usar(tmp_path):
+    """El vale no viaja entre cajas: sólo lo redime la sucursal que lo emitió."""
+    from app.bootstrap import build_services
+    from app.infrastructure.topology import Topology
+    from app.settings import Settings
+
+    db = tmp_path / "kiosco.db"
+    origen = build_services(
+        settings=Settings(database_path=str(db)),
+        topology=Topology(id_sucursal="SUC-A", id_terminal="T-A", terminal_num="1"),
+    )
+    product = make_product(origen, price="100", stock=30)
+    issued = sell_card(origen, product, 1, "100", issue_vale=True, vale_amount="100").issued_vale
+    assert issued.branch_id == "SUC-A"
+
+    # Segunda caja, otra sucursal, misma base compartida. El stock es por
+    # sucursal, así que esta caja arranca con su propia existencia.
+    otra = build_services(
+        settings=Settings(database_path=str(db)),
+        topology=Topology(id_sucursal="SUC-B", id_terminal="T-B", terminal_num="1"),
+    )
+    otra.commands.execute(AdjustStockCommand(product_id=product.id, delta=5, reason="CONTEO"))
+
+    with pytest.raises(ValidationError):
+        otra.commands.execute(
+            CompleteSaleCommand(
+                items=(SaleItemRequest(code=product.code, quantity=1),),
+                payments=(SalePaymentRequest(method="EFECTIVO", amount="100"),),
+                vale_code=issued.code,
+            )
+        )
+
+    # Y el vale sigue intacto para su sucursal de origen.
+    assert otra.queries.ask(GetValeQuery(code=issued.code)).balance.as_decimal() == Decimal(
+        "100.00"
+    )
+
+
+def test_codigo_de_vale_inexistente_falla(services):
+    product = make_product(services, price="100", stock=10)
+
+    with pytest.raises(ValeNotFoundError):
+        services.commands.execute(
+            CompleteSaleCommand(
+                items=(SaleItemRequest(code=product.code, quantity=1),),
+                payments=(SalePaymentRequest(method="EFECTIVO", amount="100"),),
+                vale_code="V-XXXXXX",
+            )
+        )
+
+
+def test_emision_de_vale_exige_importe(services):
+    product = make_product(services, price="100", stock=10)
+
+    with pytest.raises(ValidationError):
+        sell_card(services, product, 1, "100", issue_vale=True, vale_amount=None)
+    assert services.queries.ask(ListValesQuery()) == []
+
+
+def test_anular_vale_lo_deja_sin_saldo(services):
+    product = make_product(services, price="100", stock=10)
+    issued = sell_card(services, product, 1, "100", issue_vale=True, vale_amount="50").issued_vale
+
+    anulado = services.commands.execute(
+        VoidValeCommand(vale_id=issued.id, reason="Se emitió por error")
+    )
+
+    assert anulado.status == "ANULADO"
+    assert anulado.balance.as_decimal() == Decimal("0.00")
+
+
+def test_anular_vale_dos_veces_falla(services):
+    product = make_product(services, price="100", stock=10)
+    issued = sell_card(services, product, 1, "100", issue_vale=True, vale_amount="50").issued_vale
+    services.commands.execute(VoidValeCommand(vale_id=issued.id, reason="Error"))
+
+    with pytest.raises(ValeAlreadyVoidedError):
+        services.commands.execute(VoidValeCommand(vale_id=issued.id, reason="Error"))
+
+
+def test_vale_agotado_no_se_puede_volver_a_usar(services):
+    product = make_product(services, price="100", stock=30)
+    issued = sell_card(services, product, 1, "100", issue_vale=True, vale_amount="100").issued_vale
+    services.commands.execute(
+        CompleteSaleCommand(
+            items=(SaleItemRequest(code=product.code, quantity=1),),
+            payments=(),
+            vale_code=issued.code,
+        )
+    )
+
+    with pytest.raises(InsufficientValeBalanceError):
+        services.commands.execute(
+            CompleteSaleCommand(
+                items=(SaleItemRequest(code=product.code, quantity=1),),
+                payments=(),
+                vale_code=issued.code,
+            )
+        )
+
+
+def test_vale_buscado_por_codigo_ignora_mayusculas(services):
+    product = make_product(services, price="100", stock=10)
+    issued = sell_card(services, product, 1, "100", issue_vale=True, vale_amount="50").issued_vale
+
+    encontrado = services.queries.ask(GetValeQuery(code=issued.code.lower()))
+
+    assert encontrado is not None
+    assert encontrado.code == issued.code
+
+
+def test_listado_de_vales_filtra_por_estado(services):
+    product = make_product(services, price="100", stock=10)
+    primer = sell_card(services, product, 1, "100", issue_vale=True, vale_amount="50").issued_vale
+    segundo = sell_card(services, product, 1, "100", issue_vale=True, vale_amount="30").issued_vale
+    services.commands.execute(VoidValeCommand(vale_id=segundo.id, reason="Error"))
+
+    activos = services.queries.ask(ListValesQuery(status="ACTIVO"))
+    anulados = services.queries.ask(ListValesQuery(status="ANULADO"))
+
+    assert [v.code for v in activos] == [primer.code]
+    assert [v.code for v in anulados] == [segundo.code]
+
+
+def test_codigos_de_vale_no_se_repiten(services):
+    product = make_product(services, price="100", stock=40)
+    emitidos = {
+        sell_card(services, product, 1, "100", issue_vale=True, vale_amount="10").issued_vale.code
+        for _ in range(8)
+    }
+
+    assert len(emitidos) == 8

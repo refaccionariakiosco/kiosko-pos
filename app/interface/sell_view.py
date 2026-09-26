@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QDoubleSpinBox,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -65,8 +66,14 @@ class ProductButton(QPushButton):
         self.setMinimumSize(150, 74)
 
 
+def cart_price(entry: dict) -> Money:
+    """Precio efectivo de la línea: el ajustado inline, o el de catálogo."""
+    override = entry.get("unit_price")
+    return override if override is not None else entry["product"].unit_price
+
+
 def cart_total(cart: list[dict]) -> Money:
-    return sum((e["product"].unit_price * e["qty"] for e in cart), Money.zero())
+    return sum((cart_price(e) * e["qty"] for e in cart), Money.zero())
 
 
 class SellView(QWidget):
@@ -150,7 +157,12 @@ class SellView(QWidget):
         self.total_label.setObjectName("totalAmount")
         self.total_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.total_label.setCursor(Qt.PointingHandCursor)
-        self.total_label.setToolTip("Doble clic para ajustar el monto a cobrar")
+        self.total_label.setToolTip(
+            "Doble clic para ajustar el monto a cobrar.\n"
+            "El ajuste es un monto absoluto sobre el total del ticket:\n"
+            "la diferencia queda registrada como descuento del ticket."
+        )
+
         self.total_label.doubleClicked.connect(self._edit_charge_amount)
         totals.addWidget(self.total_label, 1)
         cart_layout.addLayout(totals)
@@ -166,6 +178,12 @@ class SellView(QWidget):
         self.remove_btn.setObjectName("ghost")
         self.clear_btn.setObjectName("ghost")
         self.adjust_btn.setObjectName("ghost")
+        self.adjust_btn.setToolTip(
+            "Fija el monto a cobrar del ticket (monto absoluto).\n"
+            "La diferencia contra el total se guarda como descuento del ticket,\n"
+            "por encima de cualquier precio ajustado partida por partida."
+        )
+
         self.pending_btn.setObjectName("ghost")
         self.pay_btn.setObjectName("primary")
         self.cancel_ticket_btn.clicked.connect(self._cancel_ticket)
@@ -359,7 +377,7 @@ class SellView(QWidget):
                 entry["qty"] += 1
                 self._rebuild_cart()
                 return
-        cart.append({"product": product, "qty": 1})
+        cart.append({"product": product, "qty": 1, "unit_price": None})
         self._rebuild_cart()
 
     def _rebuild_cart(self) -> None:
@@ -370,13 +388,31 @@ class SellView(QWidget):
         for entry in cart:
             product = entry["product"]
             qty = entry["qty"]
-            subtotal = product.unit_price * qty
+            price = cart_price(entry)
+            subtotal = price * qty
 
             row = table.rowCount()
             table.insertRow(row)
             table.setItem(row, 0, QTableWidgetItem(product.code))
             table.setItem(row, 1, QTableWidgetItem(product.name))
-            table.setItem(row, 2, QTableWidgetItem(product.unit_price.format()))
+
+            # Precio editable: parte de catálogo y el cajero puede ajustarlo.
+            # Solo permite bajar el precio; el descuento se aplica aparte.
+            price_spin = QDoubleSpinBox()
+            price_spin.setDecimals(2)
+            price_spin.setRange(0.01, 9_999_999.99)
+            price_spin.setSingleStep(10.0)
+            price_spin.setGroupSeparatorShown(True)
+            price_spin.setKeyboardTracking(False)
+            price_spin.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            price_spin.setValue(float(price.as_decimal()))
+            price_spin.setToolTip(
+                f"Precio de catálogo: {product.unit_price.format()}\n"
+                "Ajustá el precio de esta partida. El descuento del ticket se aplica aparte."
+            )
+            price_spin.editingFinished.connect(lambda s=price_spin, pid=product.id: self._on_price(pid, s))
+            table.setCellWidget(row, 2, price_spin)
+
             spin = QSpinBox()
             spin.setMinimum(1)
             spin.setMaximum(max(1, product.stock))
@@ -386,6 +422,23 @@ class SellView(QWidget):
             table.setItem(row, 4, QTableWidgetItem(subtotal.format()))
             table.setRowHeight(row, 34)
         table.setCurrentCell(-1, -1)
+        self._refresh_totals()
+
+    def _on_price(self, product_id: int, spin: QDoubleSpinBox) -> None:
+        """Fija el precio inline de la línea y recalcula su subtotal."""
+        cart = self._current_cart()
+        index = next((i for i, e in enumerate(cart) if e["product"].id == product_id), -1)
+        if index < 0:
+            return
+        entry = cart[index]
+        new_price = Money.from_input(f"{spin.value():.2f}")
+        if new_price <= Money.zero():
+            spin.setValue(float(entry["product"].unit_price.as_decimal()))
+            return
+        entry["unit_price"] = new_price
+        table = self._current_table()
+        if index < table.rowCount():
+            table.setItem(index, 4, QTableWidgetItem((new_price * entry["qty"]).format()))
         self._refresh_totals()
 
     def _refresh_totals(self) -> None:
@@ -432,7 +485,7 @@ class SellView(QWidget):
         if entry is None:
             return
         entry["qty"] = max(1, value)
-        subtotal = entry["product"].unit_price * entry["qty"]
+        subtotal = cart_price(entry) * entry["qty"]
         self._current_table().setItem(row, 4, QTableWidgetItem(subtotal.format()))
         self._refresh_totals()
 
@@ -467,7 +520,10 @@ class SellView(QWidget):
             return
 
         command = CompleteSaleCommand(
-            items=tuple(SaleItemRequest(code=e["product"].code, quantity=e["qty"]) for e in cart),
+            items=tuple(
+                SaleItemRequest(code=e["product"].code, quantity=e["qty"], unit_price=cart_price(e))
+                for e in cart
+            ),
             payments=tuple(SalePaymentRequest(method=code, amount=amount) for code, amount in selection.payments),
             tendered=selection.tendered,
             discount=discount if discount > Money.zero() else None,

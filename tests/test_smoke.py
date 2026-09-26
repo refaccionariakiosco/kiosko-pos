@@ -590,6 +590,55 @@ def test_recibo_texto_plano(ui_services, store_settings):
     assert "Vuelto" in text
 
 
+def test_ticket_imprime_leyenda_de_devolucion(ui_services, store_settings):
+    """Cada ticket de venta deja escrita la política de devolución."""
+    from app.application.commands import (
+        CompleteSaleCommand,
+        CreateCategoryCommand,
+        CreateProductCommand,
+        SaleItemRequest,
+        SalePaymentRequest,
+    )
+    from app.infrastructure.printers.receipt import (
+        render_receipt_html,
+        render_sale_plain_text,
+    )
+    from app.settings import DEFAULT_SALE_LEGEND
+
+    c = ui_services.commands
+    cat = c.execute(CreateCategoryCommand(name="BEBIDAS"))
+    product = c.execute(
+        CreateProductCommand(code="7501055302082", name="Agua 500ml", unit_price="20", stock=5, category_id=cat.id)
+    )
+    result = c.execute(
+        CompleteSaleCommand(
+            items=(SaleItemRequest(code=product.code, quantity=1),),
+            payments=(SalePaymentRequest(method="EFECTIVO", amount="20"),),
+            tendered="20",
+        )
+    )
+    store = store_settings.store
+    assert store.sale_legend == DEFAULT_SALE_LEGEND
+
+    receipt_html = render_receipt_html(result.sale, store)
+    assert "se permite devoluci" in receipt_html
+    assert "se entrega un vale" in receipt_html
+
+    text = render_sale_plain_text(result.sale, store)
+    # El texto plano envuelve la leyenda al ancho de la impresora.
+    assert "directa. En compras con tarjeta" in text
+    assert len(text.splitlines()[-1]) <= 32
+
+
+def test_ticket_omite_leyenda_si_se_vacia(store_settings):
+    """Configurar la leyenda vacía la saca del ticket sin romper el pie."""
+    from app.infrastructure.printers.receipt import render_legend_html
+    from app.settings import StoreInfo
+
+    assert render_legend_html(StoreInfo(sale_legend="")) == ""
+    assert "ATENCION" in render_legend_html(StoreInfo(sale_legend="ATENCION"))
+
+
 def test_barcode_html_escanible(ui_services, store_settings):
     from app.application.commands import CreateCategoryCommand, CreateProductCommand, CompleteSaleCommand, SaleItemRequest, SalePaymentRequest
     from app.infrastructure.printers.receipt import render_barcode_html, render_receipt_html

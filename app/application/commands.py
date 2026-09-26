@@ -62,6 +62,8 @@ class AdjustStockCommand(Command):
 class SaleItemRequest:
     code: str
     quantity: int
+    #: Precio de venta unitario de la partida; ``None`` usa el precio de catálogo.
+    unit_price: InputAmount | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +78,12 @@ class CompleteSaleCommand(Command):
     payments: tuple[SalePaymentRequest, ...] = field(default_factory=tuple)
     tendered: InputAmount | None = None
     discount: InputAmount | None = None
+    #: Emite un vale a favor del cliente (sólo tiene sentido con pago en tarjeta).
+    issue_vale: bool = False
+    #: Importe del vale emitido; el cajero lo define en el momento del cobro.
+    vale_amount: InputAmount | None = None
+    #: Código del vale que el cliente aplica a esta compra (redención parcial).
+    vale_code: str = ""
 
     def __post_init__(self) -> None:
         if isinstance(self.items, SaleItemRequest):
@@ -87,6 +95,15 @@ class CompleteSaleCommand(Command):
 @dataclass(frozen=True, slots=True)
 class VoidSaleCommand(Command):
     sale_id: int
+    reason: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class VoidValeCommand(Command):
+    """Anula un vale por id o por código (el cajero suele teclear el código)."""
+
+    vale_id: int = 0
+    code: str = ""
     reason: str = ""
 
 
@@ -124,6 +141,8 @@ class CloseCashDayCommand(Command):
 class ApartadoItemRequest:
     code: str
     quantity: int
+    #: Precio de venta unitario de la partida; ``None`` usa el precio de catálogo.
+    unit_price: InputAmount | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -286,6 +305,7 @@ class SaveSettingsCommand(Command):
     store_address: str | None = None
     store_phone: str | None = None
     store_footer: str | None = None
+    store_sale_legend: str | None = None
     currency: str | None = None
     login_username: str | None = None
     login_password: str | None = None

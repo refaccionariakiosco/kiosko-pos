@@ -66,6 +66,10 @@ from app.application import (
     ListProvidersQuery,
     ListPurchaseOrdersHandler,
     ListPurchaseOrdersQuery,
+    ListValesHandler,
+    ListValesQuery,
+    GetValeHandler,
+    GetValeQuery,
     OpenCashDayCommand,
     OpenCashDayHandler,
     QueryBus,
@@ -88,6 +92,8 @@ from app.application import (
     UpdateProviderHandler,
     VoidSaleCommand,
     VoidSaleHandler,
+    VoidValeCommand,
+    VoidValeHandler,
 )
 from app.domain.events import (
     ApartadoAbonado,
@@ -103,6 +109,9 @@ from app.domain.events import (
     SaleItemRefunded,
     SaleVoided,
     StockAdjusted,
+    ValeIssued,
+    ValeRedeemed,
+    ValeVoided,
 )
 from app.infrastructure.db import create_engine_for, create_session_factory, init_database
 from app.infrastructure.topology import DEFAULT_BRANCH_ID, Topology, ensure_topology
@@ -225,6 +234,23 @@ def make_event_dispatcher(services: AppServices):
                     event.stock,
                     event.min_stock,
                 )
+            elif isinstance(event, ValeIssued):
+                log.info(
+                    "Vale %s emitido por %s en la venta %s.",
+                    event.code,
+                    event.amount.format(),
+                    event.receipt_number or "-",
+                )
+            elif isinstance(event, ValeRedeemed):
+                log.info(
+                    "Vale %s aplicado %s en la venta %s; saldo restante %s.",
+                    event.code,
+                    event.amount.format(),
+                    event.receipt_number or "-",
+                    event.balance.format(),
+                )
+            elif isinstance(event, ValeVoided):
+                log.info("Vale %s anulado: %s", event.code, event.reason or "sin motivo")
             else:
                 log.debug("Evento de dominio: %s", type(event).__name__)
             if callable(services.on_mutation):
@@ -297,6 +323,7 @@ def build_services(
         AddAbonoCommand: AddAbonoHandler(uow_factory),
         CancelApartadoCommand: CancelApartadoHandler(uow_factory),
         RefundSaleItemCommand: RefundSaleItemHandler(uow_factory),
+        VoidValeCommand: VoidValeHandler(uow_factory),
         RegisterCashMovementCommand: RegisterCashMovementHandler(uow_factory),
         OpenCashDayCommand: OpenCashDayHandler(uow_factory),
         CloseCashDayCommand: CloseCashDayHandler(uow_factory),
@@ -327,6 +354,8 @@ def build_services(
         ListProvidersQuery: ListProvidersHandler(uow_factory),
         ListProviderItemsQuery: ListProviderItemsHandler(uow_factory),
         ListPurchaseOrdersQuery: ListPurchaseOrdersHandler(uow_factory),
+        ListValesQuery: ListValesHandler(uow_factory),
+        GetValeQuery: GetValeHandler(uow_factory),
     }
 
     services.commands = CommandBus(command_handlers)

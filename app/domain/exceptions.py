@@ -59,3 +59,15 @@ class ApartadoNotFoundError(DomainError):
 
 class ProviderNotFoundError(DomainError):
     """No existe un proveedor con el identificador indicado."""
+
+
+class ValeNotFoundError(DomainError):
+    """No existe un vale con el código o identificador indicado."""
+
+
+class ValeAlreadyVoidedError(DomainError):
+    """El vale ya fue anulado y no admite más movimientos."""
+
+
+class InsufficientValeBalanceError(DomainError):
+    """El saldo del vale no alcanza para cubrir el importe solicitado."""

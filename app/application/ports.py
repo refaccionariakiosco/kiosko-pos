@@ -27,6 +27,7 @@ from app.domain.repositories import (
     PurchaseOrderRepository,
     SaleRepository,
     StockMovementRepository,
+    ValeRepository,
 )
 
 
@@ -43,6 +44,7 @@ class UnitOfWork(Protocol):
     cash_days: CashDayRepository
     providers: ProviderRepository
     purchase_orders: PurchaseOrderRepository
+    vales: ValeRepository
 
     def __enter__(self) -> "UnitOfWork": ...
     def __exit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None: ...

@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLineEdit,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QSpinBox,
@@ -89,12 +90,19 @@ class SettingsView(QWidget):
         self.store_address = QLineEdit(self._settings.store.address)
         self.store_phone = QLineEdit(self._settings.store.phone)
         self.store_footer = QLineEdit(self._settings.store.footer)
+        self.store_sale_legend = QPlainTextEdit(self._settings.store.sale_legend)
+        self.store_sale_legend.setMaximumHeight(64)
+        self.store_sale_legend.setToolTip(
+            "Se imprime en cada ticket de venta, debajo del pie.\n"
+            "Vaciarlo la omite."
+        )
         self.currency = QLineEdit(self._settings.currency)
         self.currency.setMaxLength(6)
         form.addRow("Nombre:", self.store_name)
         form.addRow("Dirección:", self.store_address)
         form.addRow("Teléfono:", self.store_phone)
         form.addRow("Pie de ticket:", self.store_footer)
+        form.addRow("Leyenda de devolución:", self.store_sale_legend)
         form.addRow("Moneda:", self.currency)
         card.add_layout(form)
         return card
@@ -312,6 +320,7 @@ class SettingsView(QWidget):
             store_address=self.store_address.text().strip(),
             store_phone=self.store_phone.text().strip(),
             store_footer=self.store_footer.text().strip(),
+            store_sale_legend=self.store_sale_legend.toPlainText().strip(),
             currency=self.currency.text().strip() or "$",
             login_username=self.login_username.text().strip(),
             login_password=self.login_password.text().strip(),
@@ -339,6 +348,7 @@ class SettingsView(QWidget):
             store_address=values["store_address"],
             store_phone=values["store_phone"],
             store_footer=values["store_footer"],
+            store_sale_legend=values["store_sale_legend"],
             currency=values["currency"],
             login_username=values["login_username"],
             login_password=values["login_password"],

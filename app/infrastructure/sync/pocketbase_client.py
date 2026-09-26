@@ -33,6 +33,32 @@ DEFAULT_POCKETBASE_URL = "http://192.168.100.6:8090"
 _PAGE_SIZE = 200
 
 
+class _Unset:
+    """Sentinel: "no enviar este campo" (a diferencia de ``None`` = limpiar)."""
+
+    _instance: "_Unset | None" = None
+
+    def __new__(cls) -> "_Unset":
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __repr__(self) -> str:
+        return "UNSET"
+
+    def __bool__(self) -> bool:
+        return False
+
+
+#: Marca campos que deben omitirse del payload en ``post()``.
+#:
+#: Sin esto no se puede distinguir "dejá el valor como está" de "ponelo en
+#: vacío": un ``None`` hoy se descarta del payload, y al actualizar una venta
+#: remota anulada el ``voided_at``/``notes`` nunca se limpiaban, dejando el
+#: registro local y remoto divergentes para siempre.
+UNSET = _Unset()
+
+
 class SyncTransportError(RuntimeError):
     """Fallo de red, HTTP o acceso al hablar con el hub PocketBase."""
 
@@ -132,12 +158,15 @@ class PocketBaseClient:
         Emula el comportamiento de ``upsert()`` de PostgREST: por cada fila,
         si ya existe un registro que coincide con las columnas únicas de
         ``on_conflict`` se actualiza; si no, se crea.
+
+        Los campos con valor ``None`` se envían tal cual (para vaciarlos en el
+        hub); los marcados con :data:`UNSET` se omiten del payload.
         """
         if not rows:
             return []
         key_cols = [col.strip() for col in (on_conflict or "").split(",") if col.strip()]
         for row in rows:
-            payload = {key: value for key, value in row.items() if value is not None}
+            payload = {key: value for key, value in row.items() if not isinstance(value, _Unset)}
             existing = None
             if key_cols:
                 filter_expr = self._build_filter({key: row.get(key) for key in key_cols})

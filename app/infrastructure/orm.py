@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from uuid import uuid4
 
 from sqlalchemy import (
     Boolean,
@@ -23,6 +24,16 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.infrastructure.db import Base
 
 GLOBAL_METADATA = Base.metadata
+
+
+def new_movement_uuid() -> str:
+    """Identidad única e irrepetible de un movimiento de stock en el hub.
+
+    Viaja al servidor para que el push sea idempotente (reenviar el mismo
+    movimiento no lo duplica) y para que el pull pueda reconocer los que ya
+    aplicó y no volver a descontar stock.
+    """
+    return str(uuid4())
 
 
 class SysConfigRow(Base):
@@ -124,6 +135,7 @@ class SaleItemRow(Base):
     unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     subtotal: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     refunded_qty: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    price_overridden: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
 
     sale: Mapped[SaleRow] = relationship(back_populates="items")
 
@@ -149,6 +161,61 @@ class StockMovementRow(Base):
     note: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     document: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.now, index=True)
+    #: Identidad estable del movimiento en el hub; hace idempotente el push.
+    movement_uuid: Mapped[str] = mapped_column(String(36), nullable=False, default=new_movement_uuid, index=True)
+
+
+class AppliedStockMovementRow(Base):
+    """Movimientos remotos ya aplicados localmente (deduplicación del pull)."""
+
+    __tablename__ = "applied_stock_movements"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    movement_uuid: Mapped[str] = mapped_column(String(36), nullable=False, unique=True, index=True)
+    applied_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.now)
+
+
+class ValeRow(Base):
+    """Vale de compra emitido a un cliente que pagó con tarjeta.
+
+    El ``code`` es la clave de negocio y de sincronización (lo teclea el cajero
+    para redimirlo). ``balance`` es el saldo disponible: la redención es parcial.
+    """
+
+    __tablename__ = "vales"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(24), nullable=False, unique=True, index=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    balance: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="ACTIVO", index=True)
+    branch_id: Mapped[str] = mapped_column(String(64), nullable=False, default="", index=True)
+    sale_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    receipt_number: Mapped[str] = mapped_column(String(64), nullable=False, default="", index=True)
+    issued_by: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    note: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.now, index=True)
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    usages: Mapped[list["ValeUsageRow"]] = relationship(
+        back_populates="vale", cascade="all, delete-orphan", order_by="ValeUsageRow.id"
+    )
+
+
+class ValeUsageRow(Base):
+    """Aplicación de un vale contra una venta (auditoría del consumo)."""
+
+    __tablename__ = "vale_usages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    vale_id: Mapped[int] = mapped_column(ForeignKey("vales.id"), nullable=False, index=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    sale_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    receipt_number: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    branch_id: Mapped[str] = mapped_column(String(64), nullable=False, default="", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.now, index=True)
+
+    vale: Mapped[ValeRow] = relationship(back_populates="usages")
 
 
 class ApartadoRow(Base):
@@ -179,6 +246,7 @@ class ApartadoItemRow(Base):
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     subtotal: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    price_overridden: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
 
     apartado: Mapped[ApartadoRow] = relationship(back_populates="items")
 

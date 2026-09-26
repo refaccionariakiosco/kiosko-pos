@@ -17,7 +17,9 @@ from app.domain.entities import (
     PurchaseOrder,
     Sale,
     StockMovement,
+    Vale,
 )
+from app.domain.value_objects import Money
 
 
 class CategoryRepository(ABC):
@@ -202,3 +204,32 @@ class PurchaseOrderRepository(ABC):
 
     @abstractmethod
     def next_order_number(self) -> str: ...
+
+class ValeRepository(ABC):
+    """Persistencia de vales de compra y su historial de redenciones."""
+
+    @abstractmethod
+    def add(self, vale: Vale) -> Vale: ...
+
+    @abstractmethod
+    def get(self, vale_id: int) -> Vale | None: ...
+
+    @abstractmethod
+    def get_by_code(self, code: str) -> Vale | None: ...
+
+    @abstractmethod
+    def update(self, vale: Vale) -> None: ...
+
+    @abstractmethod
+    def record_usage(
+        self, vale: Vale, amount: Money, *, sale_id: int | None = None, receipt_number: str = "",
+        branch_id: str = "",
+    ) -> None: ...
+
+    @abstractmethod
+    def list(
+        self, *, status: str | None = None, term: str | None = None, limit: int | None = None
+    ) -> list[Vale]: ...
+
+    @abstractmethod
+    def next_code(self) -> str: ...

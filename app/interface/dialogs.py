@@ -611,6 +611,12 @@ def make_table_item(text: str):
     return item
 
 
+def _entry_price(entry: dict) -> Money:
+    """Precio efectivo de una línea en construcción: override inline o catálogo."""
+    override = entry.get("unit_price")
+    return override if override is not None else entry["product"].unit_price
+
+
 # --------------------------------------------------------------------------- #
 # Recibo / detalle de venta
 # --------------------------------------------------------------------------- #
@@ -907,7 +913,7 @@ class ApartadoDialog(QDialog):
                 entry["qty"] += 1
                 self._render_items()
                 return
-        self._selected.append({"product": product, "qty": 1})
+        self._selected.append({"product": product, "qty": 1, "unit_price": None})
         self._render_items()
 
     def _add_by_text(self, text: str) -> None:
@@ -928,28 +934,61 @@ class ApartadoDialog(QDialog):
         table.setRowCount(0)
         for index, entry in enumerate(self._selected):
             product = entry["product"]
+            price = _entry_price(entry)
             row = table.rowCount()
             table.insertRow(row)
             table.setItem(row, 0, QTableWidgetItem(product.name))
-            table.setItem(row, 1, QTableWidgetItem(product.unit_price.format()))
+
+            # El precio queda congelado al crear el apartado, pero se puede
+            # ajustar mientras se arma el pedido.
+            price_spin = QDoubleSpinBox()
+            price_spin.setDecimals(2)
+            price_spin.setRange(0.01, 9_999_999.99)
+            price_spin.setSingleStep(10.0)
+            price_spin.setKeyboardTracking(False)
+            price_spin.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            price_spin.setValue(float(price.as_decimal()))
+            price_spin.setToolTip(
+                f"Precio de catálogo: {product.unit_price.format()}\n"
+                "Este precio queda congelado para el apartado."
+            )
+            price_spin.editingFinished.connect(lambda s=price_spin, r=row: self._on_price(r, s))
+            table.setCellWidget(row, 1, price_spin)
+
             spin = QSpinBox()
             spin.setMinimum(1)
             spin.setMaximum(max(1, product.stock))
             spin.setValue(entry["qty"])
             spin.valueChanged.connect(lambda value, r=row: self._on_qty(r, value))
             table.setCellWidget(row, 2, spin)
-            table.setItem(row, 3, QTableWidgetItem((product.unit_price * entry["qty"]).format()))
+            table.setItem(row, 3, QTableWidgetItem((price * entry["qty"]).format()))
+        self._update_total()
+
+    def _on_price(self, row: int, spin: QDoubleSpinBox) -> None:
+        if not 0 <= row < len(self._selected):
+            return
+        entry = self._selected[row]
+        new_price = Money.from_input(f"{spin.value():.2f}")
+        if new_price <= Money.zero():
+            spin.setValue(float(entry["product"].unit_price.as_decimal()))
+            return
+        entry["unit_price"] = new_price
+        self.items_table.setItem(row, 3, QTableWidgetItem((new_price * entry["qty"]).format()))
         self._update_total()
 
     def _on_qty(self, row: int, value: int) -> None:
         entry = self._selected[row]
         entry["qty"] = max(1, value)
         product = entry["product"]
-        self.items_table.setItem(row, 3, QTableWidgetItem((product.unit_price * entry["qty"]).format()))
+        price = _entry_price(entry)
+        self.items_table.setItem(row, 3, QTableWidgetItem((price * entry["qty"]).format()))
         self._update_total()
 
+    def _selected_total(self) -> Money:
+        return sum((_entry_price(e) * e["qty"] for e in self._selected), Money.zero())
+
     def _update_total(self) -> None:
-        total = sum((e["product"].unit_price * e["qty"] for e in self._selected), Money.zero())
+        total = self._selected_total()
         if self.abono.value() > 0:
             text = f"Total: {total.format()}  ·  Abono inicial: {Money.from_input(f'{self.abono.value():.2f}').format()}"
         else:
@@ -964,7 +1003,7 @@ class ApartadoDialog(QDialog):
             QMessageBox.warning(self, "Datos incompletos", "Agregue al menos un producto.")
             return
         if self.abono.value() > 0:
-            total = sum((e["product"].unit_price * e["qty"] for e in self._selected), Money.zero())
+            total = self._selected_total()
             if Money.from_input(f"{self.abono.value():.2f}") > total:
                 QMessageBox.warning(self, "Abono inválido", "El abono inicial no puede superar el total.")
                 return
@@ -976,7 +1015,7 @@ class ApartadoDialog(QDialog):
             "client_name": self.client_name.text().strip(),
             "client_phone": self.client_phone.text().strip(),
             "note": self.note.text().strip(),
-            "items": [(e["product"].code, e["qty"]) for e in self._selected],
+            "items": [(e["product"].code, e["qty"], _entry_price(e)) for e in self._selected],
             "initial_abono": abono,
             "abono_method": self.method.currentData(),
         }

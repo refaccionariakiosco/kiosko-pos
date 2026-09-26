@@ -65,6 +65,10 @@ def apply_migrations(engine: Engine) -> None:
     sale_items_columns = {c["name"] for c in inspector.get_columns("sale_items")}
     if "refunded_qty" not in sale_items_columns:
         statements.append("ALTER TABLE sale_items ADD COLUMN refunded_qty INTEGER NOT NULL DEFAULT 0")
+    if "price_overridden" not in sale_items_columns:
+        statements.append(
+            "ALTER TABLE sale_items ADD COLUMN price_overridden INTEGER NOT NULL DEFAULT 0"
+        )
     if "provider_items" in inspector.get_table_names():
         provider_items_columns = {c["name"] for c in inspector.get_columns("provider_items")}
         if "product_id" not in provider_items_columns:
@@ -73,6 +77,14 @@ def apply_migrations(engine: Engine) -> None:
         stock_movements_columns = {c["name"] for c in inspector.get_columns("stock_movements")}
         if "document" not in stock_movements_columns:
             statements.append("ALTER TABLE stock_movements ADD COLUMN document VARCHAR(64) NOT NULL DEFAULT ''")
+        if "movement_uuid" not in stock_movements_columns:
+            statements.append("ALTER TABLE stock_movements ADD COLUMN movement_uuid VARCHAR(36) NOT NULL DEFAULT ''")
+    if "apartado_items" in inspector.get_table_names():
+        apartado_items_columns = {c["name"] for c in inspector.get_columns("apartado_items")}
+        if "price_overridden" not in apartado_items_columns:
+            statements.append(
+                "ALTER TABLE apartado_items ADD COLUMN price_overridden INTEGER NOT NULL DEFAULT 0"
+            )
     if statements:
         with engine.begin() as connection:
             for statement in statements:
@@ -80,6 +92,7 @@ def apply_migrations(engine: Engine) -> None:
         log.info("Migraciones aplicadas: %s", statements)
 
     _backfill_stock_movement_documents(engine)
+    _backfill_stock_movement_uuids(engine)
 
     # Fase 1 (offline-first): separación catálogo vs inventario.
     # Crea la tabla inventory (si faltara) y migra las existencias históricas de
@@ -163,6 +176,35 @@ def _backfill_stock_movement_documents(engine: Engine) -> None:
             connection.execute(text("UPDATE stock_movements SET document = :folio WHERE id = :id"), {"folio": folio, "id": row_id})
     if updates:
         log.info("Backfill de folios en stock_movements: %s filas.", len(updates))
+
+
+def _backfill_stock_movement_uuids(engine: Engine) -> None:
+    """Asigna un ``movement_uuid`` a los movimientos históricos que no lo tienen.
+
+    Sin este identificador el movimiento no se puede subir al hub de forma
+    idempotente, así que el cardex previo quedaría fuera de la sincronización.
+    """
+    from uuid import uuid4
+
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    if "stock_movements" not in inspector.get_table_names():
+        return
+    columns = {c["name"] for c in inspector.get_columns("stock_movements")}
+    if "movement_uuid" not in columns:
+        return
+    with engine.begin() as connection:
+        result = connection.execute(
+            text("SELECT id FROM stock_movements WHERE movement_uuid = '' OR movement_uuid IS NULL")
+        ).fetchall()
+        for (row_id,) in result:
+            connection.execute(
+                text("UPDATE stock_movements SET movement_uuid = :uuid WHERE id = :id"),
+                {"uuid": str(uuid4()), "id": row_id},
+            )
+    if result:
+        log.info("Backfill de movement_uuid en stock_movements: %s filas.", len(result))
 
 
 def drop_all(engine: Engine) -> None:

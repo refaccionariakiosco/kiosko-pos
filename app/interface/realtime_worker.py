@@ -24,36 +24,36 @@ REALTIME_TABLES = (
     "pos_categories",
     "pos_products",
     "pos_inventory",
+    "pos_stock_movements",
     "pos_sales",
     "pos_sale_items",
     "pos_sale_payments",
 )
 
 #: Colecciones de sucursal (el resto son catálogo global).
-BRANCH_TABLES = ("pos_inventory", "pos_sales")
+BRANCH_TABLES = ("pos_inventory", "pos_sales", "pos_stock_movements", "pos_sale_items", "pos_sale_payments")
+
+#: Colecciones que además permiten descartar por terminal de origen.
+TERMINAL_TABLES = ("pos_sales", "pos_stock_movements")
 
 
 def should_ignore_change(table: str, record: dict, own_branch: str, own_terminal: str) -> bool:
     """Decide si un evento realtime debe descartarse.
 
-    - Un terminal ignora los cambios que produjo él mismo (propio ``terminal_id``
-      en ventas) para no entrar en un bucle push -> realtime -> pull.
-    - El inventario y las ventas de otras sucursales nunca deben tirar el pull
-      de este terminal.
+    - Un terminal ignora los cambios que produjo él mismo (``origin_terminal`` o
+      ``terminal_id`` propio) para no entrar en un bucle push -> realtime -> pull.
+    - El inventario, las ventas, sus renglones/pagos y los movimientos de otras
+      sucursales nunca deben tirar el pull de este terminal.
     - Los catálogos (productos/categorías) son globales: se aceptan siempre.
     """
     if record is None:
         return True
-    if table == "pos_sales":
-        if str(record.get("terminal_id") or "") == str(own_terminal or ""):
+    if table in BRANCH_TABLES and str(record.get("branch_id") or "") != str(own_branch or ""):
+        return True
+    if table in TERMINAL_TABLES:
+        origin = record.get("origin_terminal") or record.get("terminal_id") or ""
+        if own_terminal and str(origin) == str(own_terminal):
             return True
-        if str(record.get("branch_id") or "") != str(own_branch or ""):
-            return True
-        return False
-    if table == "pos_inventory":
-        if str(record.get("branch_id") or "") != str(own_branch or ""):
-            return True
-        return False
     return False
 
 

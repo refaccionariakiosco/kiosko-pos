@@ -15,6 +15,7 @@ KEY_STORE_NAME = "store_name"
 KEY_STORE_ADDRESS = "store_address"
 KEY_STORE_PHONE = "store_phone"
 KEY_STORE_FOOTER = "store_footer"
+KEY_STORE_SALE_LEGEND = "store_sale_legend"
 KEY_CURRENCY = "currency"
 KEY_LOGIN_USERNAME = "login_username"
 KEY_LOGIN_PASSWORD = "login_password"
@@ -30,6 +31,7 @@ LOCAL_CONFIG_KEYS: tuple[str, ...] = (
     KEY_STORE_ADDRESS,
     KEY_STORE_PHONE,
     KEY_STORE_FOOTER,
+    KEY_STORE_SALE_LEGEND,
     KEY_CURRENCY,
     KEY_LOGIN_USERNAME,
     KEY_LOGIN_PASSWORD,
@@ -77,6 +79,7 @@ def load_local_config(settings, session) -> None:
         address=values.get(KEY_STORE_ADDRESS, settings.store.address),
         phone=values.get(KEY_STORE_PHONE, settings.store.phone),
         footer=values.get(KEY_STORE_FOOTER, settings.store.footer),
+        sale_legend=values.get(KEY_STORE_SALE_LEGEND, settings.store.sale_legend),
     )
     object.__setattr__(settings, "store", store)
     object.__setattr__(
@@ -127,19 +130,22 @@ def load_local_config(settings, session) -> None:
 
 
 def apply_local_config(settings, *, store_name=None, store_address=None, store_phone=None,
-                       store_footer=None, currency=None, login_username=None,
+                       store_footer=None, store_sale_legend=None, currency=None,
+                       login_username=None,
                        login_password=None, label_printer_kind=None, brother_printer_ip=None,
                        label_width_mm=None, label_height_mm=None, label_dpi=None,
                        ticket_printer=None) -> None:
     """Aplica en memoria un subconjunto de ajustes (sólo los no ``None``)."""
     from app.settings import StoreInfo
 
-    if any(value is not None for value in (store_name, store_address, store_phone, store_footer)):
+    if any(value is not None for value in (store_name, store_address, store_phone, store_footer,
+                                           store_sale_legend)):
         store = StoreInfo(
             name=store_name if store_name is not None else settings.store.name,
             address=store_address if store_address is not None else settings.store.address,
             phone=store_phone if store_phone is not None else settings.store.phone,
             footer=store_footer if store_footer is not None else settings.store.footer,
+            sale_legend=store_sale_legend if store_sale_legend is not None else settings.store.sale_legend,
         )
         object.__setattr__(settings, "store", store)
     if currency is not None:

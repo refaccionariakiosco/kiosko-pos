@@ -84,6 +84,32 @@ class SaleItemRefunded(DomainEvent):
 
 
 @dataclass(frozen=True, slots=True)
+class ValeIssued(DomainEvent):
+    vale_id: int
+    code: str
+    amount: Money
+    sale_id: int = 0
+    receipt_number: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ValeRedeemed(DomainEvent):
+    vale_id: int
+    code: str
+    amount: Money
+    balance: Money
+    sale_id: int = 0
+    receipt_number: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ValeVoided(DomainEvent):
+    vale_id: int
+    code: str
+    reason: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class CashMovementRegistered(DomainEvent):
     movement_type: str
     amount: Money

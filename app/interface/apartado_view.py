@@ -125,7 +125,11 @@ class ApartadoView(QWidget):
                 CreateApartadoCommand(
                     client_name=values["client_name"],
                     client_phone=values["client_phone"],
-                    items=tuple(ApartadoItemRequest(code=code, quantity=qty) for code, qty in values["items"]),
+                    items=tuple(
+                        ApartadoItemRequest(code=code, quantity=qty, unit_price=unit_price)
+                        for code, qty, unit_price in values["items"]
+                    ),
+
                     initial_abono=values["initial_abono"],
                     abono_method=values["abono_method"],
                     note=values["note"],

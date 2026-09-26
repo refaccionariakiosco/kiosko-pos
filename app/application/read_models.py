@@ -49,6 +49,7 @@ class SaleItemDTO:
     unit_price: Money
     subtotal: Money
     refunded_qty: int = 0
+    price_overridden: bool = False
 
     @property
     def remaining_qty(self) -> int:
@@ -125,6 +126,30 @@ class CompleteSaleResult:
     total: Money
     change_amount: Money
     sale: SaleDTO
+    #: Vale emitido por esta venta (si el cajero pidió entregarlo).
+    issued_vale: Optional[ValeDTO] = None
+    #: Importe del vale que el cliente aplicó a esta compra.
+    vale_applied: Money = field(default_factory=Money.zero)
+    #: Saldo que quedó en el vale redimido, si el pago fue parcial.
+    vale_remaining: Money = field(default_factory=Money.zero)
+
+
+@dataclass(slots=True)
+class ValeDTO:
+    id: int
+    code: str
+    amount: Money
+    balance: Money
+    status: str
+    branch_id: str = ""
+    receipt_number: str = ""
+    issued_by: str = ""
+    note: str = ""
+    created_at: Optional[datetime] = None
+
+    @property
+    def is_usable(self) -> bool:
+        return self.status == "ACTIVO" and self.balance > Money.zero()
 
 
 @dataclass(slots=True)
@@ -141,6 +166,7 @@ class ApartadoItemDTO:
     quantity: int
     unit_price: Money
     subtotal: Money
+    price_overridden: bool = False
 
 
 @dataclass(slots=True)

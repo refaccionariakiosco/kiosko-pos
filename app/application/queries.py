@@ -101,3 +101,20 @@ class ListPurchaseOrdersQuery(Query):
     """
     status: str | None = None
     provider: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ListValesQuery(Query):
+    """Lista los vales de la sucursal para consulta y anulación.
+
+    ``status`` en None busca todos; ``term`` busca por código, ticket o cajero.
+    """
+    status: str | None = None
+    term: str = ""
+    limit: int | None = 200
+
+
+@dataclass(frozen=True, slots=True)
+class GetValeQuery(Query):
+    code: str = ""
+    vale_id: int | None = None

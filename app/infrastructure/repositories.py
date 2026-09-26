@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import secrets
 from datetime import datetime
 from decimal import Decimal
 from typing import Iterable
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from app.domain.entities import (
@@ -26,6 +27,7 @@ from app.domain.entities import (
     Sale,
     SaleItem,
     StockMovement,
+    Vale,
 )
 from app.domain.exceptions import ProviderNotFoundError, ValidationError
 from app.domain.repositories import (
@@ -38,6 +40,7 @@ from app.domain.repositories import (
     PurchaseOrderRepository,
     SaleRepository,
     StockMovementRepository,
+    ValeRepository,
 )
 from app.domain.value_objects import Money
 from app.infrastructure.orm import (
@@ -57,6 +60,8 @@ from app.infrastructure.orm import (
     SalePaymentRow,
     SaleRow,
     StockMovementRow,
+    ValeRow,
+    ValeUsageRow,
 )
 from app.infrastructure.topology import DEFAULT_BRANCH_ID
 
@@ -156,6 +161,7 @@ def _sale_from_row(row: SaleRow) -> Sale:
                 quantity=item_row.quantity,
                 unit_price=Money.from_input(item_row.unit_price),
                 refunded_qty=item_row.refunded_qty or 0,
+                price_overridden=bool(item_row.price_overridden),
             )
         )
     for pay_row in row.payments:
@@ -338,6 +344,7 @@ class SqlAlchemySaleRepository(SaleRepository):
                     unit_price=item.unit_price.as_decimal(),
                     subtotal=item.subtotal.as_decimal(),
                     refunded_qty=item.refunded_qty,
+                    price_overridden=item.price_overridden,
                 )
             )
         for payment in sale.payments:
@@ -480,6 +487,7 @@ def _apartado_from_row(row: ApartadoRow) -> Apartado:
                 product_name=item_row.product_name,
                 quantity=item_row.quantity,
                 unit_price=Money.from_input(item_row.unit_price),
+                price_overridden=bool(item_row.price_overridden),
             )
         )
     for abono_row in row.abonos:
@@ -516,6 +524,7 @@ class SqlAlchemyApartadoRepository(ApartadoRepository):
                     quantity=item.quantity,
                     unit_price=item.unit_price.as_decimal(),
                     subtotal=item.subtotal.as_decimal(),
+                    price_overridden=item.price_overridden,
                 )
             )
         for abono in apartado.abonos:
@@ -902,3 +911,124 @@ class SqlAlchemyPurchaseOrderRepository(PurchaseOrderRepository):
             except ValueError:
                 seq = 0
         return f"P-{seq + 1:06d}"
+
+
+# --------------------------------------------------------------------------- #
+# Vales de compra
+# --------------------------------------------------------------------------- #
+
+#: Sin I, O, 0 ni 1: el código se dicta por teléfono y no debe ser ambiguo.
+VALE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def generate_vale_code(length: int = 6) -> str:
+    """Código de vale legible y dictable: ``V-7KQ4M2``."""
+    return "V-" + "".join(secrets.choice(VALE_ALPHABET) for _ in range(length))
+
+
+def _vale_from_row(row: ValeRow) -> Vale:
+    return Vale(
+        id=row.id,
+        code=row.code,
+        amount=_to_money(row.amount),
+        balance=_to_money(row.balance),
+        status=row.status,
+        branch_id=row.branch_id or "",
+        sale_id=row.sale_id,
+        receipt_number=row.receipt_number or "",
+        issued_by=row.issued_by or "",
+        note=row.note or "",
+        created_at=row.created_at,
+        voided_at=row.voided_at,
+    )
+
+
+class SqlAlchemyValeRepository(ValeRepository):
+    def __init__(self, session: Session, branch_id: str = ""):
+        self._session = session
+        self._branch = branch_id or DEFAULT_BRANCH_ID
+
+    def add(self, vale: Vale) -> Vale:
+        row = ValeRow(
+            code=vale.code,
+            amount=vale.amount.as_decimal(),
+            balance=vale.balance.as_decimal(),
+            status=vale.status,
+            branch_id=vale.branch_id or self._branch,
+            sale_id=vale.sale_id,
+            receipt_number=vale.receipt_number,
+            issued_by=vale.issued_by,
+            note=vale.note,
+            created_at=vale.created_at,
+            voided_at=vale.voided_at,
+        )
+        self._session.add(row)
+        self._session.flush()
+        vale.id = row.id
+        return vale
+
+    def get(self, vale_id: int) -> Vale | None:
+        row = self._session.get(ValeRow, vale_id)
+        return _vale_from_row(row) if row else None
+
+    def get_by_code(self, code: str) -> Vale | None:
+        needle = (code or "").strip().upper()
+        if not needle:
+            return None
+        row = self._session.scalars(
+            select(ValeRow).where(func.upper(ValeRow.code) == needle)
+        ).first()
+        return _vale_from_row(row) if row else None
+
+    def update(self, vale: Vale) -> None:
+        row = self._session.get(ValeRow, vale.id)
+        if row is None:
+            return
+        row.amount = vale.amount.as_decimal()
+        row.balance = vale.balance.as_decimal()
+        row.status = vale.status
+        row.branch_id = vale.branch_id or row.branch_id
+        row.note = vale.note
+        row.voided_at = vale.voided_at
+
+    def record_usage(
+        self, vale: Vale, amount: Money, *, sale_id: int | None = None, receipt_number: str = "",
+        branch_id: str = "",
+    ) -> None:
+        self._session.add(
+            ValeUsageRow(
+                vale_id=vale.id or 0,
+                amount=amount.as_decimal(),
+                sale_id=sale_id,
+                receipt_number=receipt_number,
+                branch_id=branch_id or vale.branch_id or self._branch,
+                created_at=datetime.now(),
+            )
+        )
+
+    def list(
+        self, *, status: str | None = None, term: str | None = None, limit: int | None = None
+    ) -> list[Vale]:
+        stmt = select(ValeRow)
+        if status:
+            stmt = stmt.where(ValeRow.status == status)
+        if term:
+            needle = f"%{term.strip()}%"
+            stmt = stmt.where(
+                (ValeRow.code.ilike(needle))
+                | (ValeRow.receipt_number.ilike(needle))
+                | (ValeRow.issued_by.ilike(needle))
+            )
+        stmt = stmt.order_by(ValeRow.created_at.desc(), ValeRow.id.desc())
+        if limit:
+            stmt = stmt.limit(limit)
+        return [_vale_from_row(r) for r in self._session.scalars(stmt).all()]
+
+    def next_code(self) -> str:
+        """Código libre: reintenta ante las pocas colisiones que pueda haber."""
+        taken = set(self._session.scalars(select(ValeRow.code)).all())
+        for _ in range(50):
+            code = generate_vale_code()
+            if code not in taken:
+                return code
+        return generate_vale_code(9)

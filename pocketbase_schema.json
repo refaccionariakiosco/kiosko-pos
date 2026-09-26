@@ -16,7 +16,11 @@
           "max": 80,
           "min": 0,
           "pattern": "",
-          "options": { "min": null, "max": null, "pattern": "" }
+          "options": {
+            "min": null,
+            "max": null,
+            "pattern": ""
+          }
         },
         {
           "name": "description",
@@ -30,7 +34,11 @@
           "max": 0,
           "min": 0,
           "pattern": "",
-          "options": { "min": null, "max": null, "pattern": "" }
+          "options": {
+            "min": null,
+            "max": null,
+            "pattern": ""
+          }
         },
         {
           "name": "updated_at",
@@ -40,7 +48,10 @@
           "hidden": false,
           "primaryKey": false,
           "system": false,
-          "options": { "min": "", "max": "" }
+          "options": {
+            "min": "",
+            "max": ""
+          }
         }
       ],
       "indexes": [
@@ -69,7 +80,11 @@
           "max": 32,
           "min": 0,
           "pattern": "",
-          "options": { "min": null, "max": null, "pattern": "" }
+          "options": {
+            "min": null,
+            "max": null,
+            "pattern": ""
+          }
         },
         {
           "name": "name",
@@ -83,7 +98,11 @@
           "max": 255,
           "min": 0,
           "pattern": "",
-          "options": { "min": null, "max": null, "pattern": "" }
+          "options": {
+            "min": null,
+            "max": null,
+            "pattern": ""
+          }
         },
         {
           "name": "description",
@@ -97,7 +116,11 @@
           "max": 0,
           "min": 0,
           "pattern": "",
-          "options": { "min": null, "max": null, "pattern": "" }
+          "options": {
+            "min": null,
+            "max": null,
+            "pattern": ""
+          }
         },
         {
           "name": "category_name",
@@ -111,7 +134,11 @@
           "max": 80,
           "min": 0,
           "pattern": "",
-          "options": { "min": null, "max": null, "pattern": "" }
+          "options": {
+            "min": null,
+            "max": null,
+            "pattern": ""
+          }
         },
         {
           "name": "unit_price",
@@ -124,7 +151,11 @@
           "min": null,
           "max": null,
           "noDecimal": false,
-          "options": { "min": null, "max": null, "noDecimal": false }
+          "options": {
+            "min": null,
+            "max": null,
+            "noDecimal": false
+          }
         },
         {
           "name": "cost",
@@ -137,7 +168,11 @@
           "min": null,
           "max": null,
           "noDecimal": false,
-          "options": { "min": null, "max": null, "noDecimal": false }
+          "options": {
+            "min": null,
+            "max": null,
+            "noDecimal": false
+          }
         },
         {
           "name": "wholesale_price",
@@ -150,7 +185,11 @@
           "min": null,
           "max": null,
           "noDecimal": false,
-          "options": { "min": null, "max": null, "noDecimal": false }
+          "options": {
+            "min": null,
+            "max": null,
+            "noDecimal": false
+          }
         },
         {
           "name": "active",
@@ -170,7 +209,10 @@
           "hidden": false,
           "primaryKey": false,
           "system": false,
-          "options": { "min": "", "max": "" }
+          "options": {
+            "min": "",
+            "max": ""
+          }
         }
       ],
       "indexes": [
@@ -199,7 +241,11 @@
           "max": 32,
           "min": 0,
           "pattern": "",
-          "options": { "min": null, "max": null, "pattern": "" }
+          "options": {
+            "min": null,
+            "max": null,
+            "pattern": ""
+          }
         },
         {
           "name": "branch_id",
@@ -213,7 +259,11 @@
           "max": 128,
           "min": 0,
           "pattern": "",
-          "options": { "min": null, "max": null, "pattern": "" }
+          "options": {
+            "min": null,
+            "max": null,
+            "pattern": ""
+          }
         },
         {
           "name": "stock",
@@ -226,7 +276,11 @@
           "min": null,
           "max": null,
           "noDecimal": true,
-          "options": { "min": null, "max": null, "noDecimal": true }
+          "options": {
+            "min": null,
+            "max": null,
+            "noDecimal": true
+          }
         },
         {
           "name": "min_stock",
@@ -239,7 +293,11 @@
           "min": null,
           "max": null,
           "noDecimal": true,
-          "options": { "min": null, "max": null, "noDecimal": true }
+          "options": {
+            "min": null,
+            "max": null,
+            "noDecimal": true
+          }
         },
         {
           "name": "updated_at",
@@ -249,7 +307,10 @@
           "hidden": false,
           "primaryKey": false,
           "system": false,
-          "options": { "min": "", "max": "" }
+          "options": {
+            "min": "",
+            "max": ""
+          }
         }
       ],
       "indexes": [
@@ -279,7 +340,11 @@
           "max": 32,
           "min": 0,
           "pattern": "",
-          "options": { "min": null, "max": null, "pattern": "" }
+          "options": {
+            "min": null,
+            "max": null,
+            "pattern": ""
+          }
         },
         {
           "name": "status",
@@ -293,7 +358,11 @@
           "max": 16,
           "min": 0,
           "pattern": "",
-          "options": { "min": null, "max": null, "pattern": "" }
+          "options": {
+            "min": null,
+            "max": null,
+            "pattern": ""
+          }
         },
         {
           "name": "created_at",
@@ -303,7 +372,10 @@
           "hidden": false,
           "primaryKey": false,
           "system": false,
-          "options": { "min": "", "max": "" }
+          "options": {
+            "min": "",
+            "max": ""
+          }
         },
         {
           "name": "tendered",
@@ -316,7 +388,11 @@
           "min": null,
           "max": null,
           "noDecimal": false,
-          "options": { "min": null, "max": null, "noDecimal": false }
+          "options": {
+            "min": null,
+            "max": null,
+            "noDecimal": false
+          }
         },
         {
           "name": "subtotal",
@@ -329,7 +405,11 @@
           "min": null,
           "max": null,
           "noDecimal": false,
-          "options": { "min": null, "max": null, "noDecimal": false }
+          "options": {
+            "min": null,
+            "max": null,
+            "noDecimal": false
+          }
         },
         {
           "name": "discount",
@@ -342,7 +422,11 @@
           "min": null,
           "max": null,
           "noDecimal": false,
-          "options": { "min": null, "max": null, "noDecimal": false }
+          "options": {
+            "min": null,
+            "max": null,
+            "noDecimal": false
+          }
         },
         {
           "name": "void_reason",
@@ -356,7 +440,11 @@
           "max": 255,
           "min": 0,
           "pattern": "",
-          "options": { "min": null, "max": null, "pattern": "" }
+          "options": {
+            "min": null,
+            "max": null,
+            "pattern": ""
+          }
         },
         {
           "name": "voided_at",
@@ -366,7 +454,10 @@
           "hidden": false,
           "primaryKey": false,
           "system": false,
-          "options": { "min": "", "max": "" }
+          "options": {
+            "min": "",
+            "max": ""
+          }
         },
         {
           "name": "branch_id",
@@ -380,7 +471,11 @@
           "max": 128,
           "min": 0,
           "pattern": "",
-          "options": { "min": null, "max": null, "pattern": "" }
+          "options": {
+            "min": null,
+            "max": null,
+            "pattern": ""
+          }
         },
         {
           "name": "terminal_id",
@@ -394,7 +489,11 @@
           "max": 64,
           "min": 0,
           "pattern": "",
-          "options": { "min": null, "max": null, "pattern": "" }
+          "options": {
+            "min": null,
+            "max": null,
+            "pattern": ""
+          }
         },
         {
           "name": "terminal_num",
@@ -408,7 +507,11 @@
           "max": 16,
           "min": 0,
           "pattern": "",
-          "options": { "min": null, "max": null, "pattern": "" }
+          "options": {
+            "min": null,
+            "max": null,
+            "pattern": ""
+          }
         }
       ],
       "indexes": [
@@ -438,7 +541,11 @@
           "max": 32,
           "min": 0,
           "pattern": "",
-          "options": { "min": null, "max": null, "pattern": "" }
+          "options": {
+            "min": null,
+            "max": null,
+            "pattern": ""
+          }
         },
         {
           "name": "seq",
@@ -451,7 +558,11 @@
           "min": null,
           "max": null,
           "noDecimal": true,
-          "options": { "min": null, "max": null, "noDecimal": true }
+          "options": {
+            "min": null,
+            "max": null,
+            "noDecimal": true
+          }
         },
         {
           "name": "product_code",
@@ -465,7 +576,11 @@
           "max": 32,
           "min": 0,
           "pattern": "",
-          "options": { "min": null, "max": null, "pattern": "" }
+          "options": {
+            "min": null,
+            "max": null,
+            "pattern": ""
+          }
         },
         {
           "name": "product_name",
@@ -479,7 +594,11 @@
           "max": 255,
           "min": 0,
           "pattern": "",
-          "options": { "min": null, "max": null, "pattern": "" }
+          "options": {
+            "min": null,
+            "max": null,
+            "pattern": ""
+          }
         },
         {
           "name": "quantity",
@@ -492,7 +611,11 @@
           "min": null,
           "max": null,
           "noDecimal": true,
-          "options": { "min": null, "max": null, "noDecimal": true }
+          "options": {
+            "min": null,
+            "max": null,
+            "noDecimal": true
+          }
         },
         {
           "name": "unit_price",
@@ -505,7 +628,11 @@
           "min": null,
           "max": null,
           "noDecimal": false,
-          "options": { "min": null, "max": null, "noDecimal": false }
+          "options": {
+            "min": null,
+            "max": null,
+            "noDecimal": false
+          }
         },
         {
           "name": "subtotal",
@@ -518,7 +645,11 @@
           "min": null,
           "max": null,
           "noDecimal": false,
-          "options": { "min": null, "max": null, "noDecimal": false }
+          "options": {
+            "min": null,
+            "max": null,
+            "noDecimal": false
+          }
         },
         {
           "name": "refunded_qty",
@@ -531,7 +662,39 @@
           "min": null,
           "max": null,
           "noDecimal": true,
-          "options": { "min": null, "max": null, "noDecimal": true }
+          "options": {
+            "min": null,
+            "max": null,
+            "noDecimal": true
+          }
+        },
+        {
+          "name": "price_overridden",
+          "type": "bool",
+          "required": false,
+          "presentable": false,
+          "hidden": false,
+          "primaryKey": false,
+          "system": false,
+          "options": {}
+        },
+        {
+          "name": "branch_id",
+          "type": "text",
+          "required": true,
+          "presentable": false,
+          "hidden": false,
+          "primaryKey": false,
+          "system": false,
+          "autogeneratePattern": "",
+          "max": 128,
+          "min": 0,
+          "pattern": "",
+          "options": {
+            "min": null,
+            "max": null,
+            "pattern": ""
+          }
         }
       ],
       "indexes": [
@@ -560,7 +723,11 @@
           "max": 32,
           "min": 0,
           "pattern": "",
-          "options": { "min": null, "max": null, "pattern": "" }
+          "options": {
+            "min": null,
+            "max": null,
+            "pattern": ""
+          }
         },
         {
           "name": "seq",
@@ -573,7 +740,11 @@
           "min": null,
           "max": null,
           "noDecimal": true,
-          "options": { "min": null, "max": null, "noDecimal": true }
+          "options": {
+            "min": null,
+            "max": null,
+            "noDecimal": true
+          }
         },
         {
           "name": "method",
@@ -587,7 +758,11 @@
           "max": 16,
           "min": 0,
           "pattern": "",
-          "options": { "min": null, "max": null, "pattern": "" }
+          "options": {
+            "min": null,
+            "max": null,
+            "pattern": ""
+          }
         },
         {
           "name": "amount",
@@ -600,7 +775,29 @@
           "min": null,
           "max": null,
           "noDecimal": false,
-          "options": { "min": null, "max": null, "noDecimal": false }
+          "options": {
+            "min": null,
+            "max": null,
+            "noDecimal": false
+          }
+        },
+        {
+          "name": "branch_id",
+          "type": "text",
+          "required": true,
+          "presentable": false,
+          "hidden": false,
+          "primaryKey": false,
+          "system": false,
+          "autogeneratePattern": "",
+          "max": 128,
+          "min": 0,
+          "pattern": "",
+          "options": {
+            "min": null,
+            "max": null,
+            "pattern": ""
+          }
         }
       ],
       "indexes": [
@@ -629,7 +826,11 @@
           "max": 128,
           "min": 0,
           "pattern": "^[\\w\\.\\-]+$",
-          "options": { "min": null, "max": null, "pattern": "" }
+          "options": {
+            "min": null,
+            "max": null,
+            "pattern": ""
+          }
         },
         {
           "name": "email",
@@ -643,7 +844,10 @@
           "max": 255,
           "min": 0,
           "pattern": "",
-          "options": { "exceptDomains": null, "onlyDomains": null }
+          "options": {
+            "exceptDomains": null,
+            "onlyDomains": null
+          }
         },
         {
           "name": "emailVisibility",
@@ -690,7 +894,11 @@
           "max": 128,
           "min": 0,
           "pattern": "",
-          "options": { "min": null, "max": null, "pattern": "" }
+          "options": {
+            "min": null,
+            "max": null,
+            "pattern": ""
+          }
         }
       ],
       "indexes": [
@@ -712,6 +920,179 @@
         "requireUsername": false,
         "manageRule": "id = @request.auth.id"
       }
+    },
+    {
+      "name": "pos_stock_movements",
+      "type": "base",
+      "listRule": null,
+      "viewRule": null,
+      "createRule": null,
+      "updateRule": null,
+      "deleteRule": null,
+      "options": {},
+      "fields": [
+        {
+          "name": "movement_uuid",
+          "type": "text",
+          "required": true,
+          "presentable": false,
+          "hidden": false,
+          "primaryKey": false,
+          "system": false,
+          "autogeneratePattern": "",
+          "max": 36,
+          "min": 0,
+          "pattern": "",
+          "options": {
+            "min": null,
+            "max": null,
+            "pattern": ""
+          }
+        },
+        {
+          "name": "product_code",
+          "type": "text",
+          "required": true,
+          "presentable": false,
+          "hidden": false,
+          "primaryKey": false,
+          "system": false,
+          "autogeneratePattern": "",
+          "max": 32,
+          "min": 0,
+          "pattern": "",
+          "options": {
+            "min": null,
+            "max": null,
+            "pattern": ""
+          }
+        },
+        {
+          "name": "branch_id",
+          "type": "text",
+          "required": true,
+          "presentable": false,
+          "hidden": false,
+          "primaryKey": false,
+          "system": false,
+          "autogeneratePattern": "",
+          "max": 128,
+          "min": 0,
+          "pattern": "",
+          "options": {
+            "min": null,
+            "max": null,
+            "pattern": ""
+          }
+        },
+        {
+          "name": "delta",
+          "type": "number",
+          "required": false,
+          "presentable": false,
+          "hidden": false,
+          "primaryKey": false,
+          "system": false,
+          "min": null,
+          "max": null,
+          "noDecimal": true,
+          "options": {
+            "min": null,
+            "max": null,
+            "noDecimal": true
+          }
+        },
+        {
+          "name": "reason",
+          "type": "text",
+          "required": true,
+          "presentable": false,
+          "hidden": false,
+          "primaryKey": false,
+          "system": false,
+          "autogeneratePattern": "",
+          "max": 32,
+          "min": 0,
+          "pattern": "",
+          "options": {
+            "min": null,
+            "max": null,
+            "pattern": ""
+          }
+        },
+        {
+          "name": "document",
+          "type": "text",
+          "required": false,
+          "presentable": false,
+          "hidden": false,
+          "primaryKey": false,
+          "system": false,
+          "autogeneratePattern": "",
+          "max": 64,
+          "min": 0,
+          "pattern": "",
+          "options": {
+            "min": null,
+            "max": null,
+            "pattern": ""
+          }
+        },
+        {
+          "name": "note",
+          "type": "text",
+          "required": false,
+          "presentable": false,
+          "hidden": false,
+          "primaryKey": false,
+          "system": false,
+          "autogeneratePattern": "",
+          "max": 255,
+          "min": 0,
+          "pattern": "",
+          "options": {
+            "min": null,
+            "max": null,
+            "pattern": ""
+          }
+        },
+        {
+          "name": "created_at",
+          "type": "date",
+          "required": false,
+          "presentable": false,
+          "hidden": false,
+          "primaryKey": false,
+          "system": false,
+          "options": {
+            "min": "",
+            "max": ""
+          }
+        },
+        {
+          "name": "origin_terminal",
+          "type": "text",
+          "required": false,
+          "presentable": false,
+          "hidden": false,
+          "primaryKey": false,
+          "system": false,
+          "autogeneratePattern": "",
+          "max": 64,
+          "min": 0,
+          "pattern": "",
+          "options": {
+            "min": null,
+            "max": null,
+            "pattern": ""
+          }
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_pos_stock_movements_uuid ON pos_stock_movements (movement_uuid)",
+        "CREATE INDEX idx_pos_stock_movements_branch ON pos_stock_movements (branch_id)",
+        "CREATE INDEX idx_pos_stock_movements_product ON pos_stock_movements (product_code, branch_id)"
+      ]
     }
   ]
 }

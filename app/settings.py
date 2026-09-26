@@ -20,6 +20,14 @@ def _default_data_dir() -> Path:
 DEFAULT_DATA_DIR = _default_data_dir()
 DEFAULT_DB_PATH = DEFAULT_DATA_DIR / "kiosco.db"
 
+# Política de devolución que se imprime en cada ticket de venta. Es el texto que
+# el negocio necesita dejar por escrito: en efectivo o transferencia se devuelve
+# directo; con tarjeta no, se entrega un vale.
+DEFAULT_SALE_LEGEND = (
+    "En compra por transferencia o efectivo se permite devolución directa. "
+    "En compras con tarjeta se entrega un vale aplicable a compras en el negocio."
+)
+
 
 @dataclass(frozen=True, slots=True)
 class StoreInfo:
@@ -29,6 +37,7 @@ class StoreInfo:
     footer: str = "¡Gracias por su compra!"
     branch_label: str = ""
     terminal_label: str = ""
+    sale_legend: str = DEFAULT_SALE_LEGEND
 
 
 @dataclass(frozen=True, slots=True)

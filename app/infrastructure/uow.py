@@ -21,6 +21,7 @@ from app.infrastructure.repositories import (
     SqlAlchemyPurchaseOrderRepository,
     SqlAlchemySaleRepository,
     SqlAlchemyStockMovementRepository,
+    SqlAlchemyValeRepository,
 )
 from app.infrastructure.topology import DEFAULT_BRANCH_ID
 
@@ -55,6 +56,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
     cash_days: SqlAlchemyCashDayRepository | None = None
     providers: SqlAlchemyProviderRepository | None = None
     purchase_orders: SqlAlchemyPurchaseOrderRepository | None = None
+    vales: SqlAlchemyValeRepository | None = None
     _tracked: list[AggregateEvents] | None = None
 
     def __enter__(self) -> UnitOfWork:
@@ -70,6 +72,10 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         self.cash_days = SqlAlchemyCashDayRepository(self.session)
         self.providers = SqlAlchemyProviderRepository(self.session)
         self.purchase_orders = SqlAlchemyPurchaseOrderRepository(self.session)
+        # Un vale sólo se redime en la sucursal que lo emitió.
+        self.vales = SqlAlchemyValeRepository(
+            self.session, branch_id=self.branch_id or DEFAULT_BRANCH_ID
+        )
         self._tracked = []
         return self
 

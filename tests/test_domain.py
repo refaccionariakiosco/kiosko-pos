@@ -6,11 +6,21 @@ from decimal import Decimal
 
 import pytest
 
-from app.domain.entities import Category, PaymentMethod, Product, Sale, StockMovement
+from app.domain.entities import (
+    Apartado,
+    Category,
+    PaymentMethod,
+    Product,
+    Sale,
+    StockMovement,
+    Vale,
+)
 from app.domain.exceptions import (
     InsufficientStockError,
+    InsufficientValeBalanceError,
     InvalidQuantityError,
     SaleAlreadyVoidedError,
+    ValeAlreadyVoidedError,
     ValidationError,
 )
 from app.domain.value_objects import Money
@@ -136,3 +146,201 @@ def test_stock_movement_valido() -> None:
     assert movement.delta == -2
     with pytest.raises(ValidationError):
         StockMovement(product_id=1, delta=0, reason="AJUSTE")
+
+
+# --------------------------------------------------------------------------- #
+# Precio por partida (override inline del cajero)
+# --------------------------------------------------------------------------- #
+
+
+def test_sale_acepta_precio_por_partida() -> None:
+    product = Product(code="A1", name="Gaseosa", unit_price=Money("40"), stock=10)
+    sale = Sale(receipt_number="R-000001")
+    sale.add_item(product, 2, unit_price=Money("30"))
+
+    item = sale.items[0]
+    assert item.unit_price.as_decimal() == Decimal("30.00")
+    assert item.subtotal.as_decimal() == Decimal("60.00")
+    assert sale.subtotal.as_decimal() == Decimal("60.00")
+    assert item.price_overridden is True
+
+
+def test_sale_sin_override_usa_precio_de_catalogo() -> None:
+    product = Product(code="A1", name="Gaseosa", unit_price=Money("40"), stock=10)
+    sale = Sale(receipt_number="R-000001")
+    sale.add_item(product, 2)
+    assert sale.items[0].price_overridden is False
+
+    # Mismo importe que catálogo: no es un override real.
+    sale2 = Sale(receipt_number="R-000002")
+    sale2.add_item(product, 2, unit_price=Money("40"))
+    assert sale2.items[0].unit_price.as_decimal() == Decimal("40.00")
+    assert sale2.items[0].price_overridden is False
+
+
+def test_sale_rechaza_precio_no_positivo() -> None:
+    product = Product(code="A1", name="Gaseosa", unit_price=Money("40"), stock=10)
+    sale = Sale(receipt_number="R-000001")
+    with pytest.raises(ValidationError):
+        sale.add_item(product, 1, unit_price=Money("0"))
+
+
+def test_sale_fusiona_conservando_el_precio_ajustado() -> None:
+    product = Product(code="A1", name="Gaseosa", unit_price=Money("40"), stock=10)
+    sale = Sale(receipt_number="R-000001")
+    sale.add_item(product, 1, unit_price=Money("30"))
+    sale.add_item(product, 2)
+
+    assert len(sale.items) == 1
+    assert sale.items[0].quantity == 3
+    assert sale.items[0].unit_price.as_decimal() == Decimal("30.00")
+    assert sale.subtotal.as_decimal() == Decimal("90.00")
+
+
+def test_sale_rechaza_conflicto_de_precio_al_fusionar() -> None:
+    product = Product(code="A1", name="Gaseosa", unit_price=Money("40"), stock=10)
+    sale = Sale(receipt_number="R-000001")
+    sale.add_item(product, 1, unit_price=Money("30"))
+    with pytest.raises(ValidationError):
+        sale.add_item(product, 1, unit_price=Money("25"))
+
+
+def test_apartado_acepta_precio_por_partida() -> None:
+    product = Product(code="A1", name="Gaseosa", unit_price=Money("40"), stock=10)
+    apartado = Apartado(client_name="Ana", client_phone="")
+    apartado.add_item(product, 2, unit_price=Money("35"))
+
+    item = apartado.items[0]
+    assert item.unit_price.as_decimal() == Decimal("35.00")
+    assert item.subtotal.as_decimal() == Decimal("70.00")
+    assert item.price_overridden is True
+    assert apartado.total.as_decimal() == Decimal("70.00")
+
+
+def test_apartado_rechaza_precio_no_positivo() -> None:
+    product = Product(code="A1", name="Gaseosa", unit_price=Money("40"), stock=10)
+    apartado = Apartado(client_name="Ana", client_phone="")
+    with pytest.raises(ValidationError):
+        apartado.add_item(product, 1, unit_price=Money("0"))
+
+
+def test_apartado_rechaza_conflicto_de_precio_al_fusionar() -> None:
+    product = Product(code="A1", name="Gaseosa", unit_price=Money("40"), stock=10)
+    apartado = Apartado(client_name="Ana", client_phone="")
+    apartado.add_item(product, 1, unit_price=Money("35"))
+    with pytest.raises(ValidationError):
+        apartado.add_item(product, 1, unit_price=Money("20"))
+
+
+# --------------------------------------------------------------------------- #
+# Vales de compra
+# --------------------------------------------------------------------------- #
+
+
+def _vale(amount: str = "50") -> Vale:
+    return Vale(code="V-7KQ4M2", amount=Money(amount), branch_id="SUC-1")
+
+
+def test_vale_arranca_activo_con_saldo_inicial() -> None:
+    vale = _vale("50")
+
+    assert vale.status == Vale.STATUS_ACTIVE
+    assert vale.balance.as_decimal() == Decimal("50.00")
+    assert vale.is_usable() is True
+
+
+def test_vale_reduce_saldo_al_redimir() -> None:
+    vale = _vale("50")
+
+    applied = vale.redeem(Money("20"))
+
+    assert applied.as_decimal() == Decimal("20.00")
+    assert vale.balance.as_decimal() == Decimal("30.00")
+    assert vale.status == Vale.STATUS_ACTIVE
+
+
+def test_vale_queda_agotado_al_consumir_el_saldo() -> None:
+    vale = _vale("50")
+
+    vale.redeem(Money("50"))
+
+    assert vale.balance.as_decimal() == Decimal("0.00")
+    assert vale.status == Vale.STATUS_USED_UP
+    assert vale.is_usable() is False
+
+
+def test_vale_rechaza_redimir_mas_que_el_saldo() -> None:
+    vale = _vale("50")
+
+    with pytest.raises(InsufficientValeBalanceError):
+        vale.redeem(Money("80"))
+
+
+def test_vale_rechaza_redimir_importe_no_positivo() -> None:
+    vale = _vale("50")
+
+    with pytest.raises(ValidationError):
+        vale.redeem(Money("0"))
+
+
+def test_vale_anulado_deja_saldo_en_cero_y_no_es_redimible() -> None:
+    vale = _vale("50")
+    vale.redeem(Money("20"))
+
+    vale.void("Error de carga")
+
+    assert vale.status == Vale.STATUS_VOID
+    assert vale.balance.as_decimal() == Decimal("0.00")
+    assert vale.is_usable() is False
+    assert vale.voided_at is not None
+
+
+def test_vale_rechaza_anular_dos_veces() -> None:
+    vale = _vale("50")
+    vale.void("Error de carga")
+
+    with pytest.raises(ValeAlreadyVoidedError):
+        vale.void("Otra vez")
+
+
+def test_vale_agotado_no_se_anula_al_desvincular_la_venta() -> None:
+    """Si el cliente ya gastó el vale, anular la venta original no puede fallar.
+
+    El saldo se consumió en compras reales: no hay nada que devolver, así que el
+    vale queda ``AGOTADO`` como registro histórico en vez de romperse la anulación.
+    """
+    vale = _vale("50")
+    vale.redeem(Money("50"))
+
+    vale.void("Se anuló la venta que lo emitió")
+
+    assert vale.status == Vale.STATUS_USED_UP
+    assert vale.voided_at is None
+
+
+def test_vale_conserva_saldo_al_crearse_ya_redimido() -> None:
+    """Al releer de la base el saldo viene explícito y no debe pisarse por el monto."""
+    vale = Vale(code="V-ABC123", amount=Money("50"), balance=Money("12"), branch_id="SUC-1")
+
+    assert vale.balance.as_decimal() == Decimal("12.00")
+    assert vale.status == Vale.STATUS_ACTIVE
+
+
+def test_vale_agotado_no_revive_al_releerse_de_la_base() -> None:
+    """Regresión: un saldo en cero es real, no 'saldo sin informar'.
+
+    Si se tomara como centinela, el vale volvería a valer el monto original y el
+    cliente podría redimir el mismo crédito otra vez.
+    """
+    vale = Vale(code="V-ABC123", amount=Money("50"), balance=Money("0"), branch_id="SUC-1")
+
+    assert vale.balance.as_decimal() == Decimal("0.00")
+    assert vale.status == Vale.STATUS_USED_UP
+    assert vale.is_usable() is False
+
+
+def test_vale_nuevo_toma_el_monto_como_saldo_inicial() -> None:
+    vale = Vale(code="V-ABC123", amount=Money("50"), branch_id="SUC-1")
+
+    assert vale.balance.as_decimal() == Decimal("50.00")
+    assert vale.status == Vale.STATUS_ACTIVE

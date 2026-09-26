@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 import html
+import textwrap
 from datetime import datetime
 
 from app.application.read_models import CorteDTO, PurchaseLineDTO, SaleDTO
 from app.domain.value_objects import Money
 from app.infrastructure.labels.barcode import encode_barcode
 from app.settings import StoreInfo
+
+
+def render_legend_html(store: StoreInfo) -> str:
+    """Línea de política de devolución que se imprime en cada ticket de venta."""
+    legend = (store.sale_legend or "").strip()
+    if not legend:
+        return ""
+    return f"<div style='text-align:center;white-space:pre-wrap'>{html.escape(legend)}</div>"
 
 
 def render_receipt_html(sale: SaleDTO, store: StoreInfo, *, title: str = "RECIBO") -> str:
@@ -35,11 +44,15 @@ def render_receipt_html(sale: SaleDTO, store: StoreInfo, *, title: str = "RECIBO
         unit = item.unit_price.format()
         sub = item.subtotal.format()
         name = html.escape(item.product_name)
+        # Marca de precio alterado inline por el cajero.
+        name += "<span style='opacity:.7'> *</span>" if item.price_overridden else ""
         lines.append(f"<div>{name}</div>")
         lines.append(
             f"<div>&nbsp;&nbsp;{qty}&nbsp;x&nbsp;{html.escape(unit)}"
             f"<span style='float:right'>{html.escape(sub)}</span></div>"
         )
+    if any(item.price_overridden for item in sale.items):
+        lines.append("<div style='opacity:.7'>* precio ajustado en la venta</div>")
     lines.append(render_separator())
     if sale.discount > Money.zero():
         lines.append(
@@ -63,6 +76,9 @@ def render_receipt_html(sale: SaleDTO, store: StoreInfo, *, title: str = "RECIBO
         if sale.void_reason:
             lines.append(f"<div style='text-align:center'>{html.escape(sale.void_reason)}</div>")
     lines.append(render_separator())
+    lines.append(render_legend_html(store))
+    if (store.sale_legend or "").strip():
+        lines.append(render_separator())
     lines.append(f"<div style='text-align:center'>{html.escape(store.footer)}</div>")
     lines.append("</div>")
     return "".join(lines)
@@ -174,10 +190,13 @@ def render_sale_plain_text(sale: SaleDTO, store: StoreInfo) -> str:
     out.append(f"N. {sale.receipt_number}  {sale.created_at.strftime('%d/%m/%Y %H:%M')}")
     out.append("-" * width)
     for item in sale.items:
-        out.append(item.product_name[: width - 1])
+        suffix = " *" if item.price_overridden else ""
+        out.append(item.product_name[: width - 1 - len(suffix)] + suffix)
         out.append(
             f"  {item.quantity:>3}u x {item.unit_price.format():<12} {item.subtotal.format()}".ljust(width)
         )
+    if any(item.price_overridden for item in sale.items):
+        out.append("* precio ajustado en la venta")
     out.append("-" * width)
     if sale.discount > Money.zero():
         out.append(f"{'SUBTOTAL:':<16}{sale.subtotal.format().rjust(width - 16)}")
@@ -189,6 +208,10 @@ def render_sale_plain_text(sale: SaleDTO, store: StoreInfo) -> str:
         out.append(f"{'Efectivo:':<14}{sale.tendered.format().rjust(width - 14)}")
         out.append(f"{'Vuelto:':<14}{sale.change_amount.format().rjust(width - 14)}")
     out.append("-" * width)
+    legend = (store.sale_legend or "").strip()
+    if legend:
+        for chunk in textwrap.wrap(legend, width=width) or [""]:
+            out.append(chunk.center(width))
     out.append(store.footer.center(width))
     return "\n".join(out)
 
