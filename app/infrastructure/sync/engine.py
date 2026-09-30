@@ -59,6 +59,17 @@ from app.infrastructure.topology import Topology
 
 log = logging.getLogger(__name__)
 
+
+def _clamp_stock(value: int | None) -> int:
+    """Normaliza a 0 el stock del hub: el inventario físico nunca es negativo.
+
+    El dominio exige ``stock >= 0``; un negativo (venta con existencias en cero)
+    no debe tumbar el dashboard ni persistirse como dato inválido,
+    """
+    if value is None:
+        return 0
+    return value if value >= 0 else 0
+
 REASON_SALE = "VENTA"
 REASON_VOID = "ANULACION"
 REASON_REFUND = "DEVOLUCION"
@@ -379,8 +390,8 @@ class SyncEngine:
                 created += 1
             else:
                 updated += 1
-            local.stock = int(remote.get("stock", 0))
-            local.min_stock = int(remote.get("min_stock", 0))
+            local.stock = _clamp_stock(int(remote.get("stock") or 0))
+            local.min_stock = _clamp_stock(int(remote.get("min_stock") or 0))
             if remote_dt is not None:
                 local.updated_at = remote_dt
             product.stock = local.stock
@@ -434,7 +445,7 @@ class SyncEngine:
                 )
                 session.add(inv)
                 inv_by_product[product.id] = inv
-            inv.stock += delta
+            inv.stock = _clamp_stock((inv.stock or 0) + delta)
             inv.updated_at = _parse_iso(remote.get("created_at")) or datetime.now()
             product.stock = inv.stock
             session.add(
@@ -690,7 +701,7 @@ class SyncEngine:
                 )
                 session.add(inv)
             inv_by_product[product.id] = inv
-        inv.stock += delta
+        inv.stock = _clamp_stock((inv.stock or 0) + delta)
         session.add(
             StockMovementRow(
                 product_id=product.id,
@@ -757,7 +768,7 @@ class SyncEngine:
                 session.add(inv)
             inv_by_product[product.id] = inv
 
-        inv.stock -= quantity
+        inv.stock = _clamp_stock((inv.stock or 0) - quantity)
         session.add(
             StockMovementRow(
                 product_id=product.id,
@@ -769,7 +780,7 @@ class SyncEngine:
             )
         )
         if status == "ANULADA":
-            inv.stock += quantity
+            inv.stock = _clamp_stock((inv.stock or 0) + quantity)
             session.add(
                 StockMovementRow(
                     product_id=product.id,
@@ -781,7 +792,7 @@ class SyncEngine:
                 )
             )
         elif refunded:
-            inv.stock += refunded
+            inv.stock = _clamp_stock((inv.stock or 0) + refunded)
             session.add(
                 StockMovementRow(
                     product_id=product.id,

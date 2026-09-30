@@ -51,6 +51,7 @@ from app.application.queries import (
     GetOpenCashDayQuery,
     GetSaleQuery,
     GetSalesHistoryQuery,
+    GetValeQuery,
 )
 from app.application.read_models import (
     ApartadoDTO,
@@ -59,12 +60,13 @@ from app.application.read_models import (
     ProductDTO,
     SaleDTO,
     StockMovementDTO,
+    ValeDTO,
 )
 from app.domain.entities import PaymentMethod
 from app.domain.exceptions import DomainError
 from app.domain.value_objects import Money
 from app.infrastructure.printers.receipt import render_receipt_html
-from app.interface.widgets import glyph_icon, make_label, make_table, search_matches, with_shortcut
+from app.interface.widgets import Card, glyph_icon, make_label, make_table, search_matches, with_shortcut
 from app.settings import StoreInfo
 
 
@@ -188,10 +190,24 @@ PAYMENT_METHODS = (
 class PaymentSelection:
     """Resultado del diálogo de cobro."""
 
-    def __init__(self, payments: list[tuple[str, Money]], tendered: Money | None, print_receipt: bool):
+    def __init__(
+        self,
+        payments: list[tuple[str, Money]],
+        tendered: Money | None,
+        print_receipt: bool,
+        *,
+        vale_code: str = "",
+        issue_vale: bool = False,
+        vale_amount: Money | None = None,
+    ):
         self.payments = payments
         self.tendered = tendered
         self.print_receipt = print_receipt
+        #: Código del vale que el cliente aplicó a esta compra.
+        self.vale_code = vale_code
+        #: Si el cajero decidió entregar un vale nuevo por esta venta.
+        self.issue_vale = issue_vale
+        self.vale_amount = vale_amount
 
 
 def _money_from(spin: QDoubleSpinBox) -> Money:
@@ -228,16 +244,20 @@ def _make_amount_spin(value: Money) -> QDoubleSpinBox:
 class PaymentDialog(QDialog):
     """Cobro con selección de método por icono y cobro con/sin impresión."""
 
-    def __init__(self, total: Money, parent=None):
+    def __init__(self, total: Money, parent=None, queries: QueryBus | None = None):
         super().__init__(parent)
         self.setWindowTitle("Cobro")
         self.setMinimumWidth(480)
         self._total = total
+        self._queries = queries
+        self._vale: ValeDTO | None = None
+        self._vale_applied = Money.zero()
 
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
         layout.addWidget(make_label("TOTAL A COBRAR", object_name="kpiLabel", alignment=Qt.AlignCenter))
-        layout.addWidget(make_label(total.format(), object_name="totalAmount", alignment=Qt.AlignCenter))
+        self.total_label = make_label(total.format(), object_name="totalAmount", alignment=Qt.AlignCenter)
+        layout.addWidget(self.total_label)
 
         self.method_buttons: list[QToolButton] = []
         self._method_group = QButtonGroup(self)
@@ -273,7 +293,7 @@ class PaymentDialog(QDialog):
         cash_layout = QHBoxLayout(self.cash_row)
         cash_layout.setContentsMargins(0, 0, 0, 0)
         cash_layout.addWidget(QLabel("Recibido (efectivo):"))
-        self.tendered = _make_amount_spin(total)
+        self.tendered = _make_amount_spin(self._payable())
         cash_layout.addWidget(self.tendered, 1)
         layout.addWidget(self.cash_row)
 
@@ -290,10 +310,12 @@ class PaymentDialog(QDialog):
             row_layout.addWidget(self.mix_row[code][0])
             layout.addWidget(row)
             row.setVisible(False)
-        self.mix_row["EFECTIVO"][1].setValue(float(total.as_decimal()))
+        self.mix_row["EFECTIVO"][1].setValue(float(self._payable().as_decimal()))
 
         self.change_label = make_label("", object_name="muted", alignment=Qt.AlignRight)
         layout.addWidget(self.change_label)
+
+        self._build_vale_section(layout)
 
         self._method_group.buttonToggled.connect(self._on_method_toggled)
         self.tendered.valueChanged.connect(lambda _: self._update_feedback())
@@ -326,6 +348,163 @@ class PaymentDialog(QDialog):
         self.quiet_btn.setToolTip("F9")
 
     # ------------------------------------------------------------------ #
+    # Vale de compra
+    # ------------------------------------------------------------------ #
+
+    def _build_vale_section(self, layout) -> None:
+        """Panel para redimir un vale previo o entregar uno nuevo por la venta."""
+        card = Card("Vale de compra")
+
+        apply_row = QHBoxLayout()
+        self.vale_toggle = QCheckBox("Aplicar vale del cliente")
+        self.vale_code = QLineEdit()
+        self.vale_code.setMaxLength(12)
+        self.vale_code.setPlaceholderText("Código del vale")
+        self.vale_lookup_btn = QPushButton("Buscar")
+        self.vale_lookup_btn.setObjectName("ghost")
+        self.vale_clear_btn = QPushButton("Quitar")
+        self.vale_clear_btn.setObjectName("ghost")
+        apply_row.addWidget(self.vale_toggle)
+        apply_row.addWidget(self.vale_code, 1)
+        apply_row.addWidget(self.vale_lookup_btn)
+        apply_row.addWidget(self.vale_clear_btn)
+        card.add_layout(apply_row)
+
+        self.vale_info = make_label("", object_name="muted")
+        card.add(self.vale_info)
+
+        issue_row = QHBoxLayout()
+        self.issue_toggle = QCheckBox("Entregar vale por esta venta")
+        self.vale_amount = _make_amount_spin(Money.zero())
+        issue_row.addWidget(self.issue_toggle)
+        issue_row.addStretch(1)
+        issue_row.addWidget(QLabel("Importe del vale:"))
+        issue_row.addWidget(self.vale_amount)
+        card.add_layout(issue_row)
+
+        layout.addWidget(card)
+
+        self.vale_toggle.toggled.connect(self._on_vale_toggle)
+        self.vale_code.returnPressed.connect(self._on_lookup_vale)
+        self.vale_lookup_btn.clicked.connect(self._on_lookup_vale)
+        self.vale_clear_btn.clicked.connect(self._on_clear_vale)
+        self.issue_toggle.toggled.connect(self._on_issue_toggled)
+
+        # Sin bus de consultas no hay forma de buscar un vale: se ofrece la
+        # emisión (que no consulta) y la redemption queda deshabilitada.
+        self.vale_toggle.setEnabled(self._queries is not None)
+        if self._queries is None:
+            self.vale_info.setText("Búsqueda de vales no disponible en este contexto.")
+        self._set_vale_entry_enabled(False)
+
+    def _payable(self) -> Money:
+        """Total que queda por cobrar tras aplicar el vale del cliente."""
+        return self._total - self._vale_applied
+
+    def _set_vale_entry_enabled(self, enabled: bool) -> None:
+        self.vale_code.setEnabled(enabled)
+        self.vale_lookup_btn.setEnabled(enabled)
+        self.vale_clear_btn.setEnabled(enabled)
+
+    def _on_vale_toggle(self, checked: bool) -> None:
+        self._set_vale_entry_enabled(checked)
+        if not checked:
+            self._on_clear_vale()
+        else:
+            self.vale_code.setFocus()
+
+    def _on_clear_vale(self) -> None:
+        if self.vale_toggle.isChecked():
+            self.vale_toggle.blockSignals(True)
+            self.vale_toggle.setChecked(False)
+            self.vale_toggle.blockSignals(False)
+        self._vale = None
+        self.vale_code.clear()
+        self._apply_vale_amount()
+
+    def _reject_vale(self, message: str) -> None:
+        """Suelta el vale cargado y avisa: el cajero sigue con la venta normal."""
+        self._on_clear_vale()
+        QMessageBox.warning(self, "Vale", message)
+
+    def _on_lookup_vale(self) -> None:
+        code = self.vale_code.text().strip()
+        if not code:
+            QMessageBox.warning(self, "Vale", "Escribí el código del vale.")
+            return
+        if self._queries is None:
+            QMessageBox.warning(self, "Vale", "No se pueden buscar vales en este contexto.")
+            return
+        try:
+            vale = self._queries.ask(GetValeQuery(code=code))
+        except DomainError as exc:
+            show_domain_error(self, exc)
+            return
+        if vale is None:
+            self._reject_vale(f"El vale {code.upper()} no existe.")
+            return
+        if vale.status == "ANULADO":
+            self._reject_vale(f"El vale {vale.code} está anulado.")
+            return
+        if not vale.is_usable:
+            self._reject_vale(f"El vale {vale.code} ya está agotado.")
+            return
+        self._vale = vale
+        self.vale_code.setText(vale.code)
+        self._apply_vale_amount()
+
+    def _apply_vale_amount(self) -> None:
+        """Fija cuánto del vale se redime y deja los medios de pago en el remanente."""
+        if self._vale is None:
+            self._vale_applied = Money.zero()
+            self.vale_info.setText("")
+        else:
+            self._vale_applied = min(self._vale.balance, self._total)
+            text = f"Vale {self._vale.code}: saldo {self._vale.balance.format()}."
+            text += f" Se aplican {self._vale_applied.format()}."
+            left = self._vale.balance - self._vale_applied
+            if left > Money.zero():
+                text += f" Quedan {left.format()} para otra compra."
+            self.vale_info.setText(text)
+
+        payable = self._payable()
+        # El vale se aplica antes de contar el dinero, así que el efectivo
+        # recibido y el medio mixto arrancan por el remanente.
+        for spin in (self.tendered, self.mix_row["EFECTIVO"][1]):
+            spin.blockSignals(True)
+            spin.setValue(float(payable.as_decimal()))
+            spin.blockSignals(False)
+        self._update_feedback()
+
+    def _card_amount(self) -> Money:
+        """Cuánto de esta venta se paga con tarjeta (el vale se entrega con tarjeta)."""
+        method = self._selected_method()
+        if method == "TARJETA":
+            return self._payable()
+        if method == "MIXTO":
+            return _money_from(self.mix_row["TARJETA"][1])
+        return Money.zero()
+
+    def _on_issue_toggled(self, checked: bool) -> None:
+        if checked and _money_from(self.vale_amount) <= Money.zero():
+            self.vale_amount.setValue(float(self._card_amount().as_decimal()))
+        self.vale_amount.setEnabled(checked)
+        self._update_feedback()
+
+    def _sync_issue_state(self) -> None:
+        """El vale nuevo sólo tiene sentido si la venta se paga con tarjeta."""
+        allowed = self._card_amount() > Money.zero() and self._payable() > Money.zero()
+        if not allowed:
+            self.issue_toggle.setEnabled(False)
+            self.issue_toggle.blockSignals(True)
+            self.issue_toggle.setChecked(False)
+            self.issue_toggle.blockSignals(False)
+            self.vale_amount.setEnabled(False)
+        else:
+            self.issue_toggle.setEnabled(True)
+            self.vale_amount.setEnabled(self.issue_toggle.isChecked())
+
+    # ------------------------------------------------------------------ #
     # Estado / validación
     # ------------------------------------------------------------------ #
 
@@ -354,13 +533,17 @@ class PaymentDialog(QDialog):
         return total
 
     def _update_feedback(self) -> None:
+        self._sync_issue_state()
+        payable = self._payable()
         method = self._selected_method()
+        if self._vale is not None:
+            self.total_label.setText(payable.format())
         if method == "EFECTIVO":
-            change = _money_from(self.tendered) - self._total
+            change = _money_from(self.tendered) - payable
             change = max(change, Money.zero())
             self.change_label.setText(f"Vuelto: {change.format()}")
         elif method == "MIXTO":
-            diff = self._mix_sum() - self._total
+            diff = self._mix_sum() - payable
             if diff == Money.zero():
                 self.change_label.setText("Medios completos.")
             elif diff > Money.zero():
@@ -372,12 +555,15 @@ class PaymentDialog(QDialog):
 
     def _validate(self) -> str | None:
         method = self._selected_method()
+        payable = self._payable()
         if method == "EFECTIVO":
-            if _money_from(self.tendered) < self._total:
+            if _money_from(self.tendered) < payable:
                 return "El efectivo recibido es menor al total."
         elif method == "MIXTO":
-            if self._mix_sum() != self._total:
+            if self._mix_sum() != payable:
                 return "Los medios de pago deben sumar exactamente el total."
+        if self.issue_toggle.isChecked() and _money_from(self.vale_amount) <= Money.zero():
+            return "El importe del vale a entregar debe ser mayor a cero."
         return None
 
     def _finalize(self, print_receipt: bool) -> None:
@@ -389,18 +575,34 @@ class PaymentDialog(QDialog):
         self.accept()
 
     def build_selection(self, print_receipt: bool) -> PaymentSelection:
-        """Construye los pagos (1-3) según el método seleccionado."""
+        """Construye los pagos (1-3) según el método seleccionado.
+
+        Los pagos cubren sólo el remanente: lo que se redime del vale lo
+        asienta el handler como pago con método ``VALE``.
+        """
+        payable = self._payable()
         method = self._selected_method()
+        issue_vale = self.issue_toggle.isChecked()
+        vale_code = self._vale.code if self._vale is not None else ""
         if method == "MIXTO":
             payments = []
             for code in ("EFECTIVO", "TARJETA", "TRANSFERENCIA"):
                 amount = _money_from(self.mix_row[code][1])
                 if amount > Money.zero():
                     payments.append((code, amount))
-            return PaymentSelection(payments, _money_from(self.mix_row["EFECTIVO"][1]), print_receipt)
-        payments = [(method, self._total)]
-        tendered = _money_from(self.tendered) if method == "EFECTIVO" else None
-        return PaymentSelection(payments, tendered, print_receipt)
+            tendered = _money_from(self.mix_row["EFECTIVO"][1])
+        else:
+            # Si el vale cubrió el total no queda nada por cobrar: sin pagos.
+            payments = [(method, payable)] if payable > Money.zero() else []
+            tendered = _money_from(self.tendered) if method == "EFECTIVO" else None
+        return PaymentSelection(
+            payments,
+            tendered,
+            print_receipt,
+            vale_code=vale_code,
+            issue_vale=issue_vale,
+            vale_amount=_money_from(self.vale_amount) if issue_vale else None,
+        )
 
     def selection(self) -> PaymentSelection | None:
         return self._selection

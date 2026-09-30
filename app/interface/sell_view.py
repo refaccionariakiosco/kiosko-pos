@@ -512,7 +512,7 @@ class SellView(QWidget):
         subtotal = cart_total(cart)
         charge = self._charge_for(subtotal)
         discount = subtotal - charge if charge < subtotal else Money.zero()
-        dialog = PaymentDialog(charge, self)
+        dialog = PaymentDialog(charge, self, queries=self._queries)
         if dialog.exec() != PaymentDialog.Accepted:
             return
         selection = dialog.selection()
@@ -527,6 +527,9 @@ class SellView(QWidget):
             payments=tuple(SalePaymentRequest(method=code, amount=amount) for code, amount in selection.payments),
             tendered=selection.tendered,
             discount=discount if discount > Money.zero() else None,
+            vale_code=selection.vale_code,
+            issue_vale=selection.issue_vale,
+            vale_amount=selection.vale_amount,
         )
         try:
             result = self._commands.execute(command)
@@ -541,6 +544,25 @@ class SellView(QWidget):
         if selection.print_receipt:
             receipt_html = render_receipt_html(result.sale, self._settings.store)
             ReceiptDialog(receipt_html, self).exec()
+        self._report_vale(result)
+
+    def _report_vale(self, result) -> None:
+        """El cajero necesita dictar el código del vale antes de que se vaya el cliente."""
+        issued = getattr(result, "issued_vale", None)
+        if issued is not None:
+            QMessageBox.information(
+                self,
+                "Vale entregado",
+                f"Anotá el código del vale: {issued.code}\n"
+                f"Importe: {issued.amount.format()}\n\n"
+                "El cliente lo dicta por teléfono para aplicarlo en otra compra.",
+            )
+        elif result.vale_applied > Money.zero():
+            left = result.vale_remaining
+            message = f"Se aplicó un vale por {result.vale_applied.format()}."
+            if left > Money.zero():
+                message += f" Quedó un saldo de {left.format()}."
+            QMessageBox.information(self, "Vale aplicado", message)
 
     def _kick_drawer_if_cash(self, payments) -> None:
         """Abre el cajón de dinero al cobrar en efectivo (puede fallar sin detener la venta)."""

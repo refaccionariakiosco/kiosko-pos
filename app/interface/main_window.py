@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app import __version__
 from app.bootstrap import AppServices
 from app.interface.apartado_view import ApartadoView
 from app.interface.cardex_view import CardexView
@@ -213,7 +214,7 @@ class MainWindow(QMainWindow):
             nav.addWidget(button)
             self._nav_buttons[key] = button
 
-        version = make_label("v1.0.0", object_name="appSubtitle")
+        version = make_label(f"v{__version__}", object_name="appSubtitle")
 
         bar_layout = QHBoxLayout(bar)
         bar_layout.setContentsMargins(14, 8, 14, 8)

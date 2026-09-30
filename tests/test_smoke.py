@@ -107,6 +107,199 @@ def test_payment_dialog_cinco_metodos(qapp):
     assert sel.tendered.as_decimal() == Decimal("30.00")
 
 
+def _emitir_vale(ui_services, *, importe="80", codigo_producto="VALE-1"):
+    """Vende con tarjeta emitiendo un vale y devuelve (producto, vale emitido)."""
+    from app.application.commands import (
+        CompleteSaleCommand,
+        CreateCategoryCommand,
+        CreateProductCommand,
+        SaleItemRequest,
+        SalePaymentRequest,
+    )
+
+    c = ui_services.commands
+    cat = c.execute(CreateCategoryCommand(name="BEBIDAS"))
+    product = c.execute(
+        CreateProductCommand(code=codigo_producto, name="Producto", unit_price="100", stock=20, category_id=cat.id)
+    )
+    result = c.execute(
+        CompleteSaleCommand(
+            items=(SaleItemRequest(code=product.code, quantity=1),),
+            payments=(SalePaymentRequest(method="TARJETA", amount="100"),),
+            issue_vale=True,
+            vale_amount=importe,
+        )
+    )
+    return product, result.issued_vale
+
+
+def test_payment_dialog_aplica_vale_y_cobra_el_remanente(qapp, ui_services):
+    """El vale descuenta del total y el efectivo se cuenta por lo que queda."""
+    from app.domain.value_objects import Money
+    from app.interface.dialogs import PaymentDialog
+
+    _product, issued = _emitir_vale(ui_services, importe="80")
+
+    dialog = PaymentDialog(Money("100"), queries=ui_services.queries)
+    dialog.vale_toggle.setChecked(True)
+    # El código se dicta por teléfono: puede llegar en minúscula.
+    dialog.vale_code.setText(issued.code.lower())
+    dialog._on_lookup_vale()
+
+    assert dialog._vale.code == issued.code
+    assert dialog._vale_applied.as_decimal() == Decimal("80.00")
+    assert dialog._payable().as_decimal() == Decimal("20.00")
+    assert dialog.tendered.value() == 20.0
+
+    sel = dialog.build_selection(print_receipt=True)
+    assert sel.payments == [("EFECTIVO", Money("20"))]
+    assert sel.vale_code == issued.code
+    assert sel.issue_vale is False
+
+
+def test_payment_dialog_quitar_el_vale_devuelve_el_total(qapp, ui_services):
+    from app.domain.value_objects import Money
+    from app.interface.dialogs import PaymentDialog
+
+    _product, issued = _emitir_vale(ui_services, importe="80")
+
+    dialog = PaymentDialog(Money("100"), queries=ui_services.queries)
+    dialog.vale_toggle.setChecked(True)
+    dialog.vale_code.setText(issued.code)
+    dialog._on_lookup_vale()
+    dialog.vale_clear_btn.click()
+
+    assert dialog._vale is None
+    assert dialog._payable().as_decimal() == Decimal("100.00")
+    assert dialog.build_selection(print_receipt=False).vale_code == ""
+
+
+def test_payment_dialog_vale_que_cubre_el_total_no_deja_pagos(qapp, ui_services):
+    """Si el vale paga la compra entera no queda nada por cobrar."""
+    from app.domain.value_objects import Money
+    from app.interface.dialogs import PaymentDialog
+
+    _product, issued = _emitir_vale(ui_services, importe="150")
+
+    dialog = PaymentDialog(Money("100"), queries=ui_services.queries)
+    dialog.vale_toggle.setChecked(True)
+    dialog.vale_code.setText(issued.code)
+    dialog._on_lookup_vale()
+
+    assert dialog._payable() == Money.zero()
+    sel = dialog.build_selection(print_receipt=True)
+    assert sel.payments == []
+    assert sel.vale_code == issued.code
+    assert dialog._validate() is None
+
+
+def test_payment_dialog_rechaza_vale_que_no_se_puede_usar(qapp, ui_services, monkeypatch):
+    """Un vale inexistente o agotado se suelta con un aviso, sin frenar el cobro."""
+    from app.domain.value_objects import Money
+    from app.interface.dialogs import PaymentDialog
+
+    avisos: list[str] = []
+
+    class _Silencioso:
+        @staticmethod
+        def warning(*args, **kwargs):
+            avisos.append(args[2] if len(args) > 2 else "")
+
+    monkeypatch.setattr("app.interface.dialogs.QMessageBox", _Silencioso)
+
+    product, issued = _emitir_vale(ui_services, importe="100", codigo_producto="VALE-2")
+    # Se agota el vale aplicándolo a otra compra.
+    from app.application.commands import CompleteSaleCommand, SaleItemRequest
+
+    ui_services.commands.execute(
+        CompleteSaleCommand(items=(SaleItemRequest(code=product.code, quantity=1),), vale_code=issued.code)
+    )
+
+    dialog = PaymentDialog(Money("100"), queries=ui_services.queries)
+    dialog.vale_toggle.setChecked(True)
+
+    dialog.vale_code.setText("NOEXISTE")
+    dialog._on_lookup_vale()
+    assert dialog._vale is None
+    assert "no existe" in avisos[-1].lower()
+
+    dialog.vale_code.setText(issued.code)
+    dialog._on_lookup_vale()
+    assert dialog._vale is None
+    assert "agotado" in avisos[-1].lower()
+    assert dialog._payable() == Money("100")
+
+
+def test_payment_dialog_solo_entrega_vale_si_se_paga_con_tarjeta(qapp):
+    from app.domain.value_objects import Money
+    from app.interface.dialogs import PaymentDialog
+
+    dialog = PaymentDialog(Money("100"))
+    # Sin bus de consultas no se puede buscar un vale previo.
+    assert dialog.vale_toggle.isEnabled() is False
+    assert dialog.issue_toggle.isEnabled() is False
+
+    dialog._method_buttons_by_code["TARJETA"].setChecked(True)
+    assert dialog.issue_toggle.isEnabled() is True
+
+    dialog.issue_toggle.setChecked(True)
+    # El importe propuesto es lo que se paga con tarjeta.
+    assert dialog.vale_amount.value() == 100.0
+    sel = dialog.build_selection(print_receipt=True)
+    assert sel.issue_vale is True
+    assert sel.vale_amount.as_decimal() == Decimal("100.00")
+    assert sel.vale_code == ""
+
+
+def test_payment_dialog_no_emite_vale_con_efectivo(qapp, ui_services, monkeypatch):
+    """Al cambiar a efectivo la entrega de vale se apaga sola."""
+    from app.domain.value_objects import Money
+    from app.interface.dialogs import PaymentDialog
+
+    dialog = PaymentDialog(Money("100"), queries=ui_services.queries)
+    dialog._method_buttons_by_code["TARJETA"].setChecked(True)
+    dialog.issue_toggle.setChecked(True)
+    assert dialog.build_selection(print_receipt=True).issue_vale is True
+
+    dialog._method_buttons_by_code["EFECTIVO"].setChecked(True)
+    assert dialog.issue_toggle.isChecked() is False
+    assert dialog.build_selection(print_receipt=False).issue_vale is False
+    assert dialog._validate() is None
+
+
+def test_sell_view_dicta_el_codigo_del_vale_entregado(qapp, ui_services, store_settings, monkeypatch):
+    """El cajero necesita leer el código en voz alta antes de que se vaya el cliente."""
+    from app.application.commands import CompleteSaleCommand, SaleItemRequest
+    from app.interface.sell_view import SellView
+
+    product, issued = _emitir_vale(ui_services, importe="150", codigo_producto="VALE-3")
+    result = ui_services.commands.execute(
+        CompleteSaleCommand(
+            items=(SaleItemRequest(code=product.code, quantity=1),),
+            payments=(),
+            vale_code=issued.code,
+        )
+    )
+
+    avisos: list[tuple] = []
+
+    class _Silencioso:
+        @staticmethod
+        def information(*args, **kwargs):
+            avisos.append(args[1:3])
+
+    monkeypatch.setattr("app.interface.sell_view.QMessageBox", _Silencioso)
+
+    view = SellView(ui_services.commands, ui_services.queries, store_settings)
+    view._report_vale(result)
+
+    assert avisos, "el cajero tiene que ver el vale redimido"
+    # El vale era de 150 y la compra de 100: se aplicó todo y sobró saldo.
+    assert result.vale_applied.as_decimal() == Decimal("100.00")
+    assert result.vale_remaining.as_decimal() == Decimal("50.00")
+    assert "qued" in avisos[0][1].lower()
+
+
 def test_sell_view_tickets_pendientes(qapp, ui_services, store_settings):
     from app.application.commands import CreateCategoryCommand, CreateProductCommand
     from app.interface.sell_view import SellView

@@ -476,8 +476,12 @@ class CompleteSaleHandler:
                 )
 
             for payment in command.payments:
-                method = PaymentMethod.from_value(payment.method)
-                sale.add_payment(method, Money.from_input(payment.amount))
+                # Un vale puede cubrir el total completo: el medio de pago
+                # llega en cero y un importe cero no es un pago.
+                amount = Money.from_input(payment.amount)
+                if amount <= Money.zero():
+                    continue
+                sale.add_payment(PaymentMethod.from_value(payment.method), amount)
 
             if command.discount is not None:
                 sale.apply_discount(Money.from_input(command.discount))

@@ -3,7 +3,7 @@
 
 #define MyAppName "Kiosco POS"
 #ifndef MyAppVersion
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.2.0"
 #endif
 #define MyAppExeName "KioscoPOS.exe"
 
