@@ -478,6 +478,127 @@ def test_sell_view_override_sobrevive_a_agregar_mas_unidades(qapp, ui_services, 
     assert view.total_label.text() == "$ 30,00"
 
 
+def test_distribuye_diferencia_del_total_entre_las_partidas():
+    """El cambio en el total del ticket baja el precio de cada partida proporcionalmente."""
+    from types import SimpleNamespace
+
+    from app.domain.value_objects import Money
+    from app.interface.sell_view import cart_price, cart_total, distribute_total_to_lines
+
+    def entry(price: str, qty: int) -> dict:
+        return {"product": SimpleNamespace(unit_price=Money.from_input(price)), "qty": qty, "unit_price": None}
+
+    cart = [entry("100", 1), entry("50", 2)]  # total 200
+    achieved = distribute_total_to_lines(cart, Money.from_input("160"))
+
+    assert achieved == Money.from_input("160")
+    assert cart_total(cart) == Money.from_input("160")
+    # 40 de menos: 20 en la línea de 100 y 10 por unidad en las de 50.
+    assert cart_price(cart[0]).as_decimal() == Decimal("80.00")
+    assert cart_price(cart[1]).as_decimal() == Decimal("40.00")
+
+
+def test_distribuye_respetando_el_minimo_de_un_centavo():
+    """La partida más barata no baja de 1 centavo; el resto lo absorbe la otra."""
+    from types import SimpleNamespace
+
+    from app.domain.value_objects import Money
+    from app.interface.sell_view import cart_price, cart_total, distribute_total_to_lines
+
+    def entry(price: str, qty: int) -> dict:
+        return {"product": SimpleNamespace(unit_price=Money.from_input(price)), "qty": qty, "unit_price": None}
+
+    cart = [entry("99.99", 1), entry("0.01", 1)]  # total 100,00
+    achieved = distribute_total_to_lines(cart, Money.from_input("50.00"))
+
+    assert achieved == Money.from_input("50.00")
+    assert cart_total(cart) == Money.from_input("50.00")
+    assert cart_price(cart[1]).as_decimal() == Decimal("0.01")
+    assert cart_price(cart[0]).as_decimal() == Decimal("49.99")
+
+
+def test_ajuste_monto_modifica_las_partidas_del_ticket(qapp, ui_services, store_settings, monkeypatch):
+    from app.application.commands import CreateCategoryCommand, CreateProductCommand
+    from app.domain.value_objects import Money
+    from app.interface import sell_view as sell_module
+
+    c = ui_services.commands
+    cat = c.execute(CreateCategoryCommand(name="BEBIDAS"))
+    agua = c.execute(CreateProductCommand(code="1", name="Agua 500ml", unit_price="20", stock=10, category_id=cat.id))
+    gaseosa = c.execute(CreateProductCommand(code="2", name="Gaseosa 2L", unit_price="30", stock=10, category_id=cat.id))
+
+    view = sell_module.SellView(c, ui_services.queries, store_settings)
+    view.refresh()
+    view._add_product(agua)
+    view._add_product(gaseosa)
+    assert view.total_label.text() == "$ 50,00"
+
+    class FakeDialog:
+        Accepted = 1
+
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def exec(self) -> int:
+            return FakeDialog.Accepted
+
+        def charge_amount(self) -> Money:
+            return Money.from_input("40")
+
+    monkeypatch.setattr(sell_module, "ChargeAmountDialog", FakeDialog)
+    view._edit_charge_amount()
+
+    cart = view._current_cart()
+    assert sell_module.cart_total(cart) == Money.from_input("40")
+    assert view._ticket_charges[0] is None
+    assert view.total_label.text() == "$ 40,00"
+    assert not view.discount_label.isVisibleTo(view)
+    # Las partidas quedaron modificadas (16 y 24) y el catálogo no.
+    assert [sell_module.cart_price(e).as_decimal() for e in cart] == [Decimal("16.00"), Decimal("24.00")]
+    assert view._current_table().cellWidget(0, 2).value() == 16.00
+    assert view._current_table().item(0, 4).text() == "$ 16,00"
+    assert agua.unit_price.as_decimal() == Decimal("20.00")
+
+
+def test_ajuste_monto_residuo_no_repartible_queda_como_descuento(qapp, ui_services, store_settings, monkeypatch):
+    """Con una sola partida de 3 unidades no se puede bajar 1 centavo: queda de descuento."""
+    from app.application.commands import CreateCategoryCommand, CreateProductCommand
+    from app.domain.value_objects import Money
+    from app.interface import sell_view as sell_module
+
+    c = ui_services.commands
+    cat = c.execute(CreateCategoryCommand(name="BEBIDAS"))
+    producto = c.execute(
+        CreateProductCommand(code="7", name="Pack x3", unit_price="20", stock=10, category_id=cat.id)
+    )
+
+    view = sell_module.SellView(c, ui_services.queries, store_settings)
+    view.refresh()
+    view._add_product(producto)
+    view._add_product(producto)
+    view._add_product(producto)  # 3 unidades x 20 = 60
+    assert view.total_label.text() == "$ 60,00"
+
+    class FakeDialog:
+        Accepted = 1
+
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def exec(self) -> int:
+            return FakeDialog.Accepted
+
+        def charge_amount(self) -> Money:
+            return Money.from_input("59")
+
+    monkeypatch.setattr(sell_module, "ChargeAmountDialog", FakeDialog)
+    view._edit_charge_amount()
+
+    assert view._ticket_charges[0] == Money.from_input("59")
+    assert view.total_label.text() == "$ 59,00"
+    assert "Descuento" in view.discount_label.text()
+
+
 def test_apartado_dialog_precio_inline(qapp, ui_services):
     from PySide6.QtWidgets import QDoubleSpinBox
 

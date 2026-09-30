@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from decimal import Decimal
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence, QShortcut
@@ -74,6 +75,104 @@ def cart_price(entry: dict) -> Money:
 
 def cart_total(cart: list[dict]) -> Money:
     return sum((cart_price(e) * e["qty"] for e in cart), Money.zero())
+
+
+#: Tope sanitario para un precio unitario repartido ($ 9.999.999,99).
+MAX_LINE_PRICE_CENTS = 999_999_999
+
+
+def _to_cents(money: Money) -> int:
+    return int((money.as_decimal() * 100).to_integral_value())
+
+
+def _from_cents(cents: int, currency: str = "$") -> Money:
+    return Money(Decimal(cents) / Decimal(100), currency)
+
+
+def _proportional_shares(weights: list[int], total: int) -> list[int]:
+    """Divide ``total`` entre ``weights`` en proporción al peso de cada uno.
+
+    Método del mayor resto: la suma de los trozos es exactamente ``total``.
+    """
+    count = len(weights)
+    weight_sum = sum(weights)
+    if weight_sum <= 0:
+        base, rest = divmod(total, count)
+        return [base + (1 if index < rest else 0) for index in range(count)]
+    exact = [total * weight for weight in weights]
+    shares = [value // weight_sum for value in exact]
+    rest = total - sum(shares)
+    order = sorted(range(count), key=lambda i: (exact[i] % weight_sum, -i), reverse=True)
+    for index in order[:rest]:
+        shares[index] += 1
+    return shares
+
+
+def _fine_tune_units(units: list[int], quantities: list[int], achieved: int, target_cents: int) -> int:
+    """Acerca ``achieved`` a ``target_cents`` moviendo centavos por unidad.
+
+    Solo se mueven cantidades que acerquen el objetivo (nunca se pasa de
+    largo), se respeta el mínimo de $0,01 por unidad y se reparte en rondas
+    para que el residuo quede repartido entre varias partidas.
+    """
+    for _ in range(8):
+        if target_cents - achieved == 0:
+            return achieved
+        moved = False
+        for index, qty in enumerate(quantities):
+            pending = target_cents - achieved
+            if pending == 0:
+                return achieved
+            if abs(pending) < qty:
+                continue
+            if pending > 0:
+                if units[index] >= MAX_LINE_PRICE_CENTS:
+                    continue
+                units[index] += 1
+                achieved += qty
+            else:
+                if units[index] <= 1:
+                    continue
+                units[index] -= 1
+                achieved -= qty
+            moved = True
+        if not moved:
+            break
+    return achieved
+
+
+def distribute_total_to_lines(cart: list[dict], target: Money) -> Money:
+    """Reparte la diferencia entre el total del ticket y sus partidas.
+
+    Ajusta el precio unitario de cada partida en proporción a su subtotal
+    (redondeo al centavo, sin bajar de $0,01 la unidad) para que la suma de
+    las partidas coincida con ``target``. Toca solo el carrito: el precio de
+    catálogo no cambia.
+
+    Devuelve el total realmente logrado: puede quedar a unos centavos del
+    objetivo cuando las cantidades no permiten repartirlos exactos; en ese
+    caso el llamador deja el resto como descuento del ticket.
+    """
+    if not cart:
+        return Money.zero()
+    currency = cart_price(cart[0]).currency
+    target_cents = max(1, _to_cents(target))
+    quantities = [max(1, int(entry["qty"])) for entry in cart]
+    subtotals = [_to_cents(cart_price(entry)) * qty for entry, qty in zip(cart, quantities)]
+    total_cents = sum(subtotals)
+    if total_cents <= 0:
+        return Money.zero()
+    if total_cents == target_cents:
+        return _from_cents(total_cents, currency)
+
+    shares = _proportional_shares(subtotals, target_cents)
+    units = [max(1, (2 * share + qty) // (2 * qty)) for share, qty in zip(shares, quantities)]
+    achieved = sum(unit * qty for unit, qty in zip(units, quantities))
+    achieved = _fine_tune_units(units, quantities, achieved, target_cents)
+
+    for entry, unit in zip(cart, units):
+        entry["unit_price"] = _from_cents(unit, currency)
+    return _from_cents(achieved, currency)
 
 
 class SellView(QWidget):
@@ -159,8 +258,8 @@ class SellView(QWidget):
         self.total_label.setCursor(Qt.PointingHandCursor)
         self.total_label.setToolTip(
             "Doble clic para ajustar el monto a cobrar.\n"
-            "El ajuste es un monto absoluto sobre el total del ticket:\n"
-            "la diferencia queda registrada como descuento del ticket."
+            "El ajuste es un monto absoluto sobre el total del ticket y la\n"
+            "diferencia se reparte entre las partidas (precio de cada línea)."
         )
 
         self.total_label.doubleClicked.connect(self._edit_charge_amount)
@@ -179,9 +278,9 @@ class SellView(QWidget):
         self.clear_btn.setObjectName("ghost")
         self.adjust_btn.setObjectName("ghost")
         self.adjust_btn.setToolTip(
-            "Fija el monto a cobrar del ticket (monto absoluto).\n"
-            "La diferencia contra el total se guarda como descuento del ticket,\n"
-            "por encima de cualquier precio ajustado partida por partida."
+            "Modificar el monto a cobrar (también con doble clic en el total).\n"
+            "La diferencia se reparte entre las partidas: baja o sube el precio\n"
+            "unitario de cada línea en proporción a su subtotal."
         )
 
         self.pending_btn.setObjectName("ghost")
@@ -193,7 +292,6 @@ class SellView(QWidget):
         self.pending_btn.clicked.connect(self._pending_ticket)
         self.pay_btn.clicked.connect(self._collect)
         self.cancel_ticket_btn.setToolTip("Anular un ticket del día (F11)")
-        self.adjust_btn.setToolTip("Modificar el monto a cobrar (también con doble clic en el total)")
         self.pending_btn.setToolTip("Dejar el ticket pendiente (F6)")
         self.pay_btn.setToolTip("Cobrar (F12)")
         actions.addWidget(self.cancel_ticket_btn)
@@ -474,10 +572,23 @@ class SellView(QWidget):
         if dialog.exec() != ChargeAmountDialog.Accepted:
             return
         charge = dialog.charge_amount()
+        index = self.tabs.currentIndex()
         if charge is None:
             return
-        self._ticket_charges[self.tabs.currentIndex()] = charge
-        self._refresh_totals()
+        if charge == subtotal:
+            self._ticket_charges[index] = None
+            self._refresh_totals()
+            return
+        # La diferencia no se guarda como descuento del ticket: se reparte
+        # entre las partidas (baja/sube el precio unitario de cada línea).
+        achieved = distribute_total_to_lines(cart, charge)
+        if achieved > charge:
+            # No se pudo repartir hasta el último centavo (p. ej. cantidades
+            # que no lo permiten): el resto queda como descuento del ticket.
+            self._ticket_charges[index] = charge
+        else:
+            self._ticket_charges[index] = None
+        self._rebuild_cart()
 
     def _on_qty(self, row: int, product_id: int, value: int) -> None:
         cart = self._current_cart()

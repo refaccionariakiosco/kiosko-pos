@@ -611,6 +611,9 @@ class PaymentDialog(QDialog):
 class ChargeAmountDialog(QDialog):
     """Ajusta el monto a cobrar: entrada manual o descuento/incremento porcentual."""
 
+    #: Tope del monto a cobrar (manual o por porcentaje).
+    MAX_AMOUNT = Money(Decimal("9999999.99"))
+
     def __init__(self, subtotal: Money, current: Money, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Ajustar monto a cobrar")
@@ -652,8 +655,13 @@ class ChargeAmountDialog(QDialog):
         self.preview = make_label("", object_name="muted", alignment=Qt.AlignCenter)
         layout.addWidget(self.preview)
 
-        hint = make_label("El recibo y los pagos se calculan sobre el nuevo total.",
-                          object_name="muted", alignment=Qt.AlignCenter)
+        hint = make_label(
+            "La diferencia contra el subtotal se reparte entre las partidas del ticket\n"
+            "(baja o sube el precio unitario de cada línea). El recibo y los pagos se\n"
+            "calculan sobre el nuevo total.",
+            object_name="muted",
+            alignment=Qt.AlignCenter,
+        )
         layout.addWidget(hint)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -686,7 +694,7 @@ class ChargeAmountDialog(QDialog):
 
     def _manual_amount(self) -> Money | None:
         amount = _parse_money_input(self.amount_input.text())
-        if amount is None or amount <= Money.zero() or amount > self._subtotal:
+        if amount is None or amount <= Money.zero() or amount > self.MAX_AMOUNT:
             return None
         return amount
 
@@ -696,7 +704,7 @@ class ChargeAmountDialog(QDialog):
         value = self._subtotal * factor
         if value <= Money.zero():
             return None
-        return value
+        return value if value <= self.MAX_AMOUNT else self.MAX_AMOUNT
 
     def _computed(self) -> Money | None:
         return self._manual_amount() if self.manual_btn.isChecked() else self._pct_amount()
@@ -704,7 +712,7 @@ class ChargeAmountDialog(QDialog):
     def _update_preview(self) -> None:
         value = self._computed()
         if value is None:
-            self.preview.setText("Importe inválido (debe ser mayor a cero y no superar el subtotal).")
+            self.preview.setText("Importe inválido (debe ser mayor a cero y hasta 9.999.999,99).")
         else:
             diff = self._subtotal - value
             if diff > Money.zero():
@@ -718,7 +726,7 @@ class ChargeAmountDialog(QDialog):
     def _accept(self) -> None:
         value = self._computed()
         if value is None:
-            QMessageBox.warning(self, "Importe inválido", "Ingresá un monto mayor a cero y que no supere el subtotal.")
+            QMessageBox.warning(self, "Importe inválido", "Ingresá un monto mayor a cero.")
             return
         self._charge = value
         self.accept()
