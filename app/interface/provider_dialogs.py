@@ -1391,7 +1391,7 @@ class ImportedOrderPreviewDialog(QDialog):
         }
         self._providers = queries.ask(ListProvidersQuery())
 
-        self.setWindowTitle("Cargar pedido (PDF/Excel)")
+        self.setWindowTitle("Cargar pedido (PDF/Excel/CSV)")
         self.resize(900, 520)
 
         layout = QVBoxLayout(self)
@@ -1571,7 +1571,8 @@ class ProviderOrdersDialog(QDialog):
         layout.addWidget(make_label(f"Pedidos — {provider.name}", object_name="pageTitle"))
         layout.addWidget(
             make_label(
-                "Cargue aquí su pedido (PDF o Excel) y quedará como NUEVO pedido pendiente. "
+                "Cargue aquí su pedido (PDF, Excel o CSV) y quedará como NUEVO pedido pendiente. "
+                "Las columnas se leen en orden: Código, Cantidad, Descripción, Costo y Precio. "
                 "El stock solo se afecta al recibirlo.",
                 object_name="muted",
             )
@@ -1612,7 +1613,7 @@ class ProviderOrdersDialog(QDialog):
         receive_btn = QPushButton("Recibir a inventario")
         receive_btn.setObjectName("primary")
         receive_btn.clicked.connect(self._receive_order)
-        load_btn = QPushButton("Cargar pedido (PDF/Excel)")
+        load_btn = QPushButton("Cargar pedido (PDF/Excel/CSV)")
         load_btn.setObjectName("accent")
         load_btn.clicked.connect(self._load_order)
         buttons.addWidget(close_btn)
@@ -1666,7 +1667,10 @@ class ProviderOrdersDialog(QDialog):
 
     def _load_order(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "Cargar pedido", "", "Pedido de proveedor (*.pdf *.xlsx);;Todo (*.*)"
+            self,
+            "Cargar pedido",
+            "",
+            "Pedido de proveedor (*.pdf *.xlsx *.xls *.csv);;Todo (*.*)",
         )
         if not path:
             return
@@ -1675,6 +1679,10 @@ class ProviderOrdersDialog(QDialog):
                 result = parse_order_pdf(path)
             else:
                 result = parse_order_excel(path)
+        except ValueError as exc:
+            log.warning("Carga de pedido: %s", exc)
+            QMessageBox.warning(self, "Archivo inválido", f"No se pudo leer el archivo como pedido.\n{exc}")
+            return
         except Exception:  # noqa: BLE001 - archivo ilegible
             log.exception("Carga de pedido: archivo ilegible.")
             QMessageBox.warning(self, "Archivo inválido", "No se pudo leer el archivo como pedido.")
@@ -1684,7 +1692,8 @@ class ProviderOrdersDialog(QDialog):
                 self,
                 "Sin renglones",
                 "No se detectaron renglones de pedido en el archivo.\n"
-                "Verifique que sea un PDF/Excel de pedido de proveedor.",
+                "Se espera: Código · Cantidad · Descripción · Costo · Precio "
+                "(la fila 1 son los encabezados).",
             )
             return
         dialog = ImportedOrderPreviewDialog(
